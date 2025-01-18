@@ -52,8 +52,9 @@ API_AVAILABLE(ios(13.0))
 @interface GodotMetalLayer : CAMetalLayer <DisplayLayer>
 #endif
 @end
-
+#if defined(OPENGL_DISABLED)
+#else
 API_DEPRECATED("OpenGLES is deprecated", ios(2.0, 12.0))
 @interface GodotOpenGLLayer : CAEAGLLayer <DisplayLayer>
-
 @end
+#endif

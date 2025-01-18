@@ -39,6 +39,9 @@
 #include "core/string/ustring.h"
 
 #import <CoreMotion/CoreMotion.h>
+#if defined(VISIONOS)
+#import "ios.h" // @visionOS TODO: need VISIONOS_SCREEN_SCALE, but maybe there is a better header it could go in?
+#endif
 
 static const int max_touches = 32;
 static const float earth_gravity = 9.80665;
@@ -82,10 +85,15 @@ static const float earth_gravity = 9.80665;
 		layer = [GodotMetalLayer layer];
 #endif
 	} else if ([driverName isEqualToString:@"opengl3"]) {
+#if defined(OPENGL_DISABLED)
+		print_verbose("error: opengl3 driver was requested but this binary was compiled with OPENGL_DISABLED");
+		return nil;
+#else
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations" // OpenGL is deprecated in iOS 12.0
 		layer = [GodotOpenGLLayer layer];
 #pragma clang diagnostic pop
+#endif
 	} else {
 		return nil;
 	}
@@ -149,7 +157,11 @@ static const float earth_gravity = 9.80665;
 }
 
 - (void)godot_commonInit {
+	#if defined(VISIONOS)
+	self.contentScaleFactor = VISIONOS_SCREEN_SCALE;
+	#else
 	self.contentScaleFactor = [UIScreen mainScreen].scale;
+	#endif
 
 	[self initTouches];
 
@@ -446,7 +458,7 @@ static const float earth_gravity = 9.80665;
 #else
 	if (@available(iOS 13, *)) {
 		interfaceOrientation = [UIApplication sharedApplication].delegate.window.windowScene.interfaceOrientation;
-#if !defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR
+#if !defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR && !defined(VISIONOS)
 	} else {
 		interfaceOrientation = [[UIApplication sharedApplication] statusBarOrientation];
 #endif

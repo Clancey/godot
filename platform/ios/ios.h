@@ -60,3 +60,8 @@ public:
 };
 
 #endif // IOS_H
+#if defined(VISIONOS)
+#define VISIONOS_SCREEN_WIDTH 1920
+#define VISIONOS_SCREEN_HEIGHT 1080
+#define VISIONOS_SCREEN_SCALE 3.0
+#endif

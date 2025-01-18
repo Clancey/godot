@@ -100,6 +100,17 @@ int ios_main(int argc, char **argv) {
 	argc = add_path(argc, fargv);
 	argc = add_cmdline(argc, fargv);
 
+	bool headless = false;
+	bool runLoopHandledByHost = false;
+	for (int i = 0; i < argc; ++i) {
+		if (strcmp(fargv[i], "--headless") == 0) {
+			headless = true;
+			break;
+		} else if (strcmp(fargv[i], "--runLoopHandledByHost") == 0) {
+			runLoopHandledByHost = true;
+		}
+	}
+
 	Error err = Main::setup(fargv[0], argc - 1, &fargv[1], false);
 
 	if (err != OK) {
@@ -111,10 +122,33 @@ int ios_main(int argc, char **argv) {
 
 	os->initialize_modules();
 
+	if (headless) {
+		Main::setup2();
+		os->start();
+		if (runLoopHandledByHost) {
+			// do nothing. the caller is responsible for calling godot_runloop_step.
+		} else {
+			bool quit = false;
+			while (!quit) {
+				if (os->iterate()) {
+					quit = true;
+				}
+			}
+		}
+	}
+
 	return os->get_exit_code();
 }
 
 void ios_finish() {
 	Main::cleanup();
 	delete os;
+	os = nullptr;
+}
+
+int godot_runloop_step() {
+	if (os == nullptr) {
+		return 1;
+	}
+	return os->iterate();
 }

@@ -70,8 +70,11 @@ static ViewController *mainViewController = nil;
 	// TODO: might be required to make an early return, so app wouldn't crash because of timeout.
 	// TODO: logo screen is not displayed while shaders are compiling
 	// DummyViewController(Splash/LoadingViewController) -> setup -> GodotViewController
-
+#if defined(VISIONOS)
+	CGRect windowBounds = CGRectMake(0, 0, VISIONOS_SCREEN_WIDTH, VISIONOS_SCREEN_HEIGHT);
+#else
 	CGRect windowBounds = [[UIScreen mainScreen] bounds];
+#endif
 
 	// Create a full-screen window
 	self.window = [[UIWindow alloc] initWithFrame:windowBounds];
