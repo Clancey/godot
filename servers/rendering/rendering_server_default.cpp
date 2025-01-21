@@ -405,7 +405,7 @@ void RenderingServerDefault::sync() {
 }
 
 void RenderingServerDefault::draw(bool p_present, double frame_step) {
-	ERR_FAIL_COND_MSG(!Thread::is_main_thread(), "Manually triggering the draw function from the RenderingServer can only be done on the main thread. Call this function from the main thread or use call_deferred().");
+	// ERR_FAIL_COND_MSG(!Thread::is_main_thread(), "Manually triggering the draw function from the RenderingServer can only be done on the main thread. Call this function from the main thread or use call_deferred().");
 	// Needs to be done before changes is reset to 0, to not force the editor to redraw.
 	RS::get_singleton()->emit_signal(SNAME("frame_pre_draw"));
 	changes = 0;

@@ -35,12 +35,15 @@
 
 int gargc;
 char **gargv;
-
 int main(int argc, char *argv[]) {
 #if defined(VULKAN_ENABLED)
 	//MoltenVK - enable full component swizzling support
 	setenv("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1", 1);
 #endif
+	//Lets loop through and print out the args
+	for (int i = 0; i < argc; i++) {
+		printf("Arg %d: %s\n", i, argv[i]);
+	}
 
 	gargc = argc;
 	gargv = argv;

@@ -56,9 +56,14 @@
 
 #import <os/signpost.h>
 
+#if VISIONOS
+#import "xr_vision_interop.h"
+#endif
+
 // We have to undefine these macros because they are defined in NSObjCRuntime.h.
 #undef MIN
 #undef MAX
+
 
 void MDCommandBuffer::begin() {
 	DEV_ASSERT(commandBuffer == nil);
@@ -80,6 +85,8 @@ void MDCommandBuffer::end() {
 
 void MDCommandBuffer::commit() {
 	end();
+
+
 	[commandBuffer commit];
 	commandBuffer = nil;
 }
@@ -389,6 +396,23 @@ void MDCommandBuffer::_render_set_dirty_state() {
 }
 
 void MDCommandBuffer::render_set_viewport(VectorView<Rect2i> p_viewports) {
+	#if defined (VISIONOS)
+	XRVisionInterop *xr = [XRVisionInterop get_singleton];
+	cp_drawable_t drawable = [xr drawable];
+	if (drawable != nullptr) {
+		
+		size_t viewCount = cp_drawable_get_view_count(drawable);
+		NSLog(@"viewCount: %lu", viewCount);
+		render.viewports.resize(viewCount);
+		for (size_t i = 0; i < viewCount; i += 1) {
+			MTLViewport viewPort = [xr viewportForViewIndex:i];
+			render.viewports[i] = viewPort;
+		}
+		
+		render.dirty.set_flag(RenderState::DIRTY_VIEWPORT);
+		return;
+	}
+	#endif
 	render.viewports.resize(p_viewports.size());
 	for (uint32_t i = 0; i < p_viewports.size(); i += 1) {
 		Rect2i const &vp = p_viewports[i];

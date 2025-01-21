@@ -911,6 +911,7 @@ int Main::test_entrypoint(int argc, char *argv[], bool &tests_need_run) {
  */
 
 Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_phase) {
+	print_line("Main::Setup Godot Engine v" VERSION_NAME " (");
 	Thread::make_main_thread();
 	set_current_thread_safe_for_nodes(true);
 
@@ -3538,7 +3539,9 @@ void Main::setup_boot_logo() {
 			MAIN_PRINT("Main: ClearColor");
 			RenderingServer::get_singleton()->set_default_clear_color(boot_bg_color);
 			MAIN_PRINT("Main: Image");
+#if !defined(VISIONOS)
 			RenderingServer::get_singleton()->set_boot_image(splash, boot_bg_color, false);
+#endif
 #endif
 		}
 

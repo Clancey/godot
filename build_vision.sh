@@ -17,7 +17,7 @@ else
 	exit 1
 fi
 
-BUILD="scons p=ios library_type=shared_library $MODULE_OPTS optimize=size arch=arm64 verbose=yes $PLATFORM_OPTS opengl3=no vulkan=no metal=yes openxr=yes $@"
+BUILD="scons p=ios library_type=shared_library $MODULE_OPTS optimize=size arch=arm64 verbose=yes $PLATFORM_OPTS opengl3=no vulkan=no metal=true module_openxr_enabled=true openxr=true $@"
 
 if [ "$MODE" == "debug" ]; then
 	$BUILD target=template_debug dev_build=yes debug_symbols=yes

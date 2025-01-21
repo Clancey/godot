@@ -51,7 +51,7 @@
 #import "metal_device_properties.h"
 
 #import <Metal/Metal.h>
-#if !VISIONOS
+#if !VISIONOS_SIMULATOR
 #import <MetalFX/MetalFX.h>
 #endif
 #import <spirv_cross.hpp>
@@ -112,7 +112,11 @@ void MetalDeviceProperties::init_features(id<MTLDevice> p_device) {
 	features.layeredRendering = [p_device supportsFamily:MTLGPUFamilyApple5];
 	features.multisampleLayeredRendering = [p_device supportsFamily:MTLGPUFamilyApple7];
 	features.tessellationShader = [p_device supportsFamily:MTLGPUFamilyApple3];
+#ifdef VISIONOS_SIMULATOR
+	features.imageCubeArray = true;
+#else
 	features.imageCubeArray = [p_device supportsFamily:MTLGPUFamilyApple3];
+#endif
 	features.quadPermute = [p_device supportsFamily:MTLGPUFamilyApple4];
 	features.simdPermute = [p_device supportsFamily:MTLGPUFamilyApple6];
 	features.simdReduction = [p_device supportsFamily:MTLGPUFamilyApple7];

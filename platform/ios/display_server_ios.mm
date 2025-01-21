@@ -46,6 +46,10 @@
 #import <sys/utsname.h>
 
 #import <GameController/GameController.h>
+#if defined(VISIONOS)
+#import "xr_vision_interop.h"
+#import <CompositorServices/CompositorServices.h>
+#endif
 
 static const float kDisplayServerIOSAcceleration = 1.f;
 
@@ -69,7 +73,11 @@ DisplayServerIOS::DisplayServerIOS(const String &p_rendering_driver, WindowMode 
 	rendering_context = nullptr;
 	rendering_device = nullptr;
 
+	#if VISIONOS
+	__unsafe_unretained cp_layer_renderer_t layer = nullptr;
+	#else
 	CALayer *layer = nullptr;
+	#endif
 
 	union {
 #ifdef VULKAN_ENABLED
@@ -97,8 +105,14 @@ DisplayServerIOS::DisplayServerIOS(const String &p_rendering_driver, WindowMode 
 #ifdef METAL_ENABLED
 	if (rendering_driver == "metal") {
 		if (@available(iOS 14.0, *)) {
+			#if VISIONOS
+			cp_layer_renderer_t _l  = [[XRVisionInterop get_singleton] layerRenderer];
+			layer = _l;
+			wpd.metal.layer = _l;
+			#else
 			layer = [AppDelegate.viewController.godotView initializeRenderingForDriver:@"metal"];
 			wpd.metal.layer = (CAMetalLayer *)layer;
+			#endif
 			rendering_context = memnew(RenderingContextDriverMetal);
 		} else {
 			OS::get_singleton()->alert("Metal is only supported on iOS 14.0 and later.");
@@ -136,8 +150,12 @@ DisplayServerIOS::DisplayServerIOS(const String &p_rendering_driver, WindowMode 
 			r_error = ERR_UNAVAILABLE;
 			return;
 		}
-
+		#if VISIONOS_SCREEN_HEIGHT
+		CGSize viewSize = [[XRVisionInterop get_singleton] getResolution];
+		Size2i size = Size2i(viewSize.width, viewSize.height);
+		#else
 		Size2i size = Size2i(layer.bounds.size.width, layer.bounds.size.height) * screen_get_max_scale();
+		#endif
 		rendering_context->window_set_size(MAIN_WINDOW_ID, size.width, size.height);
 		rendering_context->window_set_vsync_mode(MAIN_WINDOW_ID, p_vsync_mode);
 
@@ -197,10 +215,12 @@ DisplayServerIOS::~DisplayServerIOS() {
 }
 
 DisplayServer *DisplayServerIOS::create_func(const String &p_rendering_driver, WindowMode p_mode, DisplayServer::VSyncMode p_vsync_mode, uint32_t p_flags, const Vector2i *p_position, const Vector2i &p_resolution, int p_screen, Context p_context, int64_t p_parent_window, Error &r_error) {
+	print_line("Creating iOS display server driver.");
 	return memnew(DisplayServerIOS(p_rendering_driver, p_mode, p_vsync_mode, p_flags, p_position, p_resolution, p_screen, p_context, p_parent_window, r_error));
 }
 
 Vector<String> DisplayServerIOS::get_rendering_drivers_func() {
+	print_line("Getting iOS rendering drivers.");
 	Vector<String> drivers;
 
 #if defined(VULKAN_ENABLED)
@@ -219,6 +239,7 @@ Vector<String> DisplayServerIOS::get_rendering_drivers_func() {
 }
 
 void DisplayServerIOS::register_ios_driver() {
+	print_line("Registering iOS display server driver.");
 	register_create_function("iOS", create_func, get_rendering_drivers_func);
 }
 
@@ -641,7 +662,10 @@ void DisplayServerIOS::window_set_size(const Size2i p_size, WindowID p_window) {
 
 Size2i DisplayServerIOS::window_get_size(WindowID p_window) const {
 	#if defined(VISIONOS)
-    return Size2i(VISIONOS_SCREEN_WIDTH, VISIONOS_SCREEN_HEIGHT);
+	CGSize size = [XRVisionInterop get_singleton].getResolution;
+	return Size2i(size.width, size.height);
+//	CGRect screenBounds = [[[[[UIApplication sharedApplication] delegate] window] rootViewController] view].bounds;
+    // return Size2i(VISIONOS_SCREEN_WIDTH, VISIONOS_SCREEN_HEIGHT);
 	#else
 	CGRect screenBounds = [UIScreen mainScreen].bounds;
 	return Size2i(screenBounds.size.width, screenBounds.size.height) * screen_get_max_scale();
@@ -800,10 +824,15 @@ String DisplayServerIOS::clipboard_get() const {
 }
 
 void DisplayServerIOS::screen_set_keep_on(bool p_enable) {
+#if !defined(VISIONOS)
 	[UIApplication sharedApplication].idleTimerDisabled = p_enable;
+#endif
 }
 
 bool DisplayServerIOS::screen_is_kept_on() const {
+#if defined(VISIONOS)
+	return true;
+#endif
 	return [UIApplication sharedApplication].idleTimerDisabled;
 }
 

@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #import "os_ios.h"
+#include <Foundation/Foundation.h>
 
 #include "core/string/ustring.h"
 #include "main/main.h"
@@ -122,8 +123,9 @@ int ios_main(int argc, char **argv) {
 
 	os->initialize_modules();
 
-	if (headless) {
+	if (headless || runLoopHandledByHost) {
 		Main::setup2();
+		// [NSLog("Starting OS")];
 		os->start();
 		if (runLoopHandledByHost) {
 			// do nothing. the caller is responsible for calling godot_runloop_step.

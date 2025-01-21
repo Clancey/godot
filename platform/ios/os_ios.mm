@@ -127,6 +127,7 @@ void OS_IOS::initialize() {
 }
 
 void OS_IOS::initialize_modules() {
+//	NSLog(@"Initializing modules");
 	ios = memnew(iOS);
 	Engine::get_singleton()->add_singleton(Engine::Singleton("iOS", ios));
 
@@ -144,7 +145,11 @@ void OS_IOS::deinitialize_modules() {
 }
 
 void OS_IOS::set_main_loop(MainLoop *p_main_loop) {
+	NSLog(@"Setting main loop");
 	main_loop = p_main_loop;
+	if(!main_loop){
+		NSLog(@"Error setting up main loop");
+	}
 }
 
 MainLoop *OS_IOS::get_main_loop() const {
@@ -152,6 +157,7 @@ MainLoop *OS_IOS::get_main_loop() const {
 }
 
 void OS_IOS::delete_main_loop() {
+	NSLog(@"Deleting main loop");
 	if (main_loop) {
 		main_loop->finalize();
 		memdelete(main_loop);
@@ -161,21 +167,23 @@ void OS_IOS::delete_main_loop() {
 }
 
 bool OS_IOS::iterate() {
-	if (!main_loop) {
-		return true;
-	}
+//	if (!main_loop) {
+//		return true;
+//	}
 
 	if (DisplayServer::get_singleton()) {
 		DisplayServer::get_singleton()->process_events();
 	}
 
-	joypad_apple->process_joypads();
+//	joypad_apple->process_joypads();
 
 	return Main::iteration();
 }
 
 void OS_IOS::start() {
+	NSLog(@"Starting main loop");
 	if (Main::start() == EXIT_SUCCESS) {
+		NSLog(@"Main loop started successfully");
 		main_loop->initialize();
 	}
 }
