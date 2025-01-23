@@ -56,12 +56,16 @@ static XRVisionInterop *singleton = nil;
 	return singleton;
 }
 
-
+bool hasSetup = false;
 // Setup method
 - (BOOL)setup:(cp_layer_renderer_t )renderer {
 
 	NSLog(@"setup Called");
 	_layerRenderer = renderer;
+	if(hasSetup) {
+		return YES;
+	}
+	hasSetup = true;
 	// Initialize the default resolution (example values)
 	// _currentResolution =  (Size2i){2732, 2048};
 	_currentResolution = CGSizeMake(2732, 2048);
@@ -144,7 +148,7 @@ static XRVisionInterop *singleton = nil;
 
 - (void)iterate {
 
-	NSLog(@"iterate Called");
+	// NSLog(@"iterate Called");
 	RenderingDevice *rendering_device = RenderingDevice::get_singleton();
 	if (!rendering_device) {
 		NSLog(@"RenderingDevice is null.");
@@ -155,9 +159,6 @@ static XRVisionInterop *singleton = nil;
 	if (!layerRenderer) {
 		NSLog(@"Layer renderer is null.");
 		return;
-	}
-	else{
-		NSLog(@"XR Vission Interop: Layer renderer is not null.");
 	}
 	RenderingServer *rendering_server = RenderingServer::get_singleton();
     if (!rendering_server) {
@@ -204,13 +205,15 @@ static XRVisionInterop *singleton = nil;
 	bool shouldContinue = [self pre_draw_viewport];
 	if (!shouldContinue) {
 		NSLog(@"pre_draw is not ready");
-		cp_frame_end_submission(_frame);
+		// cp_frame_end_submission(_frame);
 		return;
 	}
 	//gather_inputs(engine, timing);
 	//update_frame(engine, timing, input_state);
-	NSLog(@"OS-> Iterate");
+	// NSLog(@"OS-> Iterate");
+	set_current_thread_safe_for_nodes(true);
 	os->iterate();
+	set_current_thread_safe_for_nodes(false);
 
 
 	//We need to hook into the end of the drawing and call cp_frame_end_submission(frame) to submit the frame
@@ -218,7 +221,7 @@ static XRVisionInterop *singleton = nil;
 }
 
 - (bool)pre_draw_viewport {
-        NSLog(@"pre-render.");
+	
 	RenderingDevice *rendering_device = RenderingDevice::get_singleton();
 	if (!rendering_device) {
 		NSLog(@"RenderingDevice is null.");
@@ -241,8 +244,8 @@ static XRVisionInterop *singleton = nil;
 	//Now that we have the drawable, we can
 	//This is all the normal drawing code!
 	_drawable = __drawable;
-	NSLog(@"Drawable Setup found");
-	
+	//  MTLViewport vp = [self viewportForViewIndex:0];
+	//  NSLog(@"Viewport: %f %f %f %f %f %f", vp.originX, vp.originY, vp.width, vp.height, vp.znear, vp.zfar);
 	//We will setup and do the AR stuff in pre_draw_viewport
 	cp_frame_timing_t actualTiming = cp_drawable_get_frame_timing(_drawable);
 
@@ -254,25 +257,9 @@ static XRVisionInterop *singleton = nil;
 }
 
 -(MTLViewport)viewportForViewIndex:(size_t)index {
-	NSLog(@"Viewport for view index called");
     cp_view_t view = cp_drawable_get_view(_drawable, index);
-	if(view == nullptr) {
-		NSLog(@"View is null");
-	}else{
-		NSLog(@"We have the view");
-	}
     cp_view_texture_map_t texture_map = cp_view_get_view_texture_map(view);
-	if(texture_map == nullptr) {
-		NSLog(@"Texture map is null");
-	}else{
-		NSLog(@"We have the texture map");
-	}
     MTLViewport vp = cp_view_texture_map_get_viewport(texture_map);
-	if(vp.originX == 0 && vp.originY == 0 && vp.width == 0 && vp.height == 0) {
-		NSLog(@"Viewport is null");
-	}else{
-		NSLog(@"We have the viewport");
-	}
 	return vp;
 }
 

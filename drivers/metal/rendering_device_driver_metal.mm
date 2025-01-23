@@ -2043,6 +2043,14 @@ Vector<uint8_t> RenderingDeviceDriverMetal::shader_compile_binary_from_spirv(Vec
 #else
 	msl_options.platform = CompilerMSL::Options::iOS;
 #endif
+#if VISIONOS_SIMULATOR
+	msl_options.ios_support_base_vertex_instance = true;
+	msl_options.multiview = false;
+#elif TARGET_OS_VISION
+	msl_options.ios_support_base_vertex_instance = true;
+	//TODO: Enable multiview when supported.
+	msl_options.multiview = true;
+#endif
 
 #if TARGET_OS_IPHONE
 	msl_options.ios_use_simdgroup_functions = (*device_properties).features.simdPermute;

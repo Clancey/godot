@@ -217,7 +217,6 @@ public:
 		front = (front + 1) % frame_buffers.size();
 #if VISIONOS
 		id<MTLCommandBuffer> commandBuffer = p_cmd_buffer->get_command_buffer();
-		NSLog(@"Presenting drawable");
 		cp_drawable_encode_present(drawable, commandBuffer);
 #else
 		if (vsync_mode != DisplayServer::VSYNC_DISABLED) {
