@@ -72,6 +72,14 @@ static ViewController *mainViewController = nil;
 	// DummyViewController(Splash/LoadingViewController) -> setup -> GodotViewController
 #if defined(VISIONOS)
 	CGRect windowBounds = CGRectMake(0, 0, VISIONOS_SCREEN_WIDTH, VISIONOS_SCREEN_HEIGHT);
+	//Vision doesn't have the static main. So we don't get the parameters
+	const char *arg0 = [[[NSBundle mainBundle] executablePath] UTF8String]; // Path to the running application
+	const char *newArgv[] = { arg0 };
+	gargc = sizeof(newArgv) / sizeof(newArgv[0]);
+	gargv = (char **)newArgv;
+	// Pass new arguments to ios_main
+//	int err = ios_main(newArgc, (char **)newArgv);
+	
 #else
 	CGRect windowBounds = [[UIScreen mainScreen] bounds];
 #endif

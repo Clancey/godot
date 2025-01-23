@@ -69,61 +69,7 @@ bool hasSetup = false;
 	// Initialize the default resolution (example values)
 	// _currentResolution =  (Size2i){2732, 2048};
 	_currentResolution = CGSizeMake(2732, 2048);
-	const char *arg0 = [[[NSBundle mainBundle] executablePath] UTF8String]; // Path to the running application
-    const char *arg1 = "--runLoopHandledByHost"; // Additional argument
-    const char *newArgv[] = { arg0, arg1 };
-    int newArgc = sizeof(newArgv) / sizeof(newArgv[0]);
-
-    // Pass new arguments to ios_main
-    int err = ios_main(newArgc, (char **)newArgv);
-    if (err != 0) {
-        // Exit if initialization fails
-        exit(0);
-		NSLog(@"Setup Failed");
-        return NO;
-    }
-
-	// Add observer for audio interruptions
-	[[NSNotificationCenter defaultCenter] addObserver:self
-											 selector:@selector(onAudioInterruption:)
-												 name:AVAudioSessionInterruptionNotification
-											   object:[AVAudioSession sharedInstance]];
-
-	// Configure audio session
-	int sessionCategorySetting = GLOBAL_GET("audio/general/ios/session_category");
-
-	// Default to Ambient category
-	AVAudioSessionCategory category = AVAudioSessionCategoryAmbient;
-	AVAudioSessionCategoryOptions options = 0;
-
-	if (GLOBAL_GET("audio/general/ios/mix_with_others")) {
-		options |= AVAudioSessionCategoryOptionMixWithOthers;
-	}
-
-	switch (sessionCategorySetting) {
-		case SESSION_CATEGORY_MULTI_ROUTE:
-			category = AVAudioSessionCategoryMultiRoute;
-			break;
-		case SESSION_CATEGORY_PLAY_AND_RECORD:
-			category = AVAudioSessionCategoryPlayAndRecord;
-			options |= AVAudioSessionCategoryOptionDefaultToSpeaker;
-			options |= AVAudioSessionCategoryOptionAllowBluetoothA2DP;
-			options |= AVAudioSessionCategoryOptionAllowAirPlay;
-			break;
-		case SESSION_CATEGORY_PLAYBACK:
-			category = AVAudioSessionCategoryPlayback;
-			break;
-		case SESSION_CATEGORY_RECORD:
-			category = AVAudioSessionCategoryRecord;
-			break;
-		case SESSION_CATEGORY_SOLO_AMBIENT:
-			category = AVAudioSessionCategorySoloAmbient;
-			break;
-		default:
-			break;
-	}
-
-	[[AVAudioSession sharedInstance] setCategory:category withOptions:options error:nil];
+	
 	runWorldTrackingARSession();
 	return YES;
 }
