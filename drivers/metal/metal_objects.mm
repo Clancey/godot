@@ -56,10 +56,6 @@
 
 #import <os/signpost.h>
 
-#if VISIONOS
-#import "xr_vision_interop.h"
-#endif
-
 // We have to undefine these macros because they are defined in NSObjCRuntime.h.
 #undef MIN
 #undef MAX
