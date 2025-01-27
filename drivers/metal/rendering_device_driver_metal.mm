@@ -2046,7 +2046,7 @@ Vector<uint8_t> RenderingDeviceDriverMetal::shader_compile_binary_from_spirv(Vec
 #if VISIONOS_SIMULATOR
 	msl_options.ios_support_base_vertex_instance = true;
 	msl_options.multiview = false;
-#elif TARGET_OS_VISION
+#elif VISIONOS
 	msl_options.ios_support_base_vertex_instance = true;
 	//TODO: Enable multiview when supported.
 	msl_options.multiview = true;
@@ -4161,6 +4161,9 @@ Error RenderingDeviceDriverMetal::initialize(uint32_t p_device_index, uint32_t p
 		print_verbose("- Metal multiview not supported");
 	}
 
+#if defined(VISIONOS)
+	return OK;
+#endif
 	// The Metal renderer requires Apple4 family. This is 2017 era A11 chips and newer.
 	if (device_properties->features.highestFamily < MTLGPUFamilyApple4) {
 		String error_string = vformat("Your Apple GPU does not support the following features, which are required to use Metal-based renderers in Godot:\n\n");

@@ -30,6 +30,9 @@
 
 #import "app_delegate.h"
 
+#if defined(VISIONOS)
+#import "godot_vision_view.h"
+#endif
 #import "godot_view.h"
 #import "os_ios.h"
 #import "view_controller.h"
@@ -61,10 +64,26 @@ enum {
 };
 
 static ViewController *mainViewController = nil;
+#if defined(VISIONOS)
+static GodotVisionView *mainGodotView = nil;
+#else
+static GodotView *mainGodotView = nil;
+#endif
 
 + (ViewController *)viewController {
 	return mainViewController;
 }
+
+#if defined(VISIONOS)
++ (GodotVisionView *)godotView {
+	return mainGodotView;
+}
+#else
++ (GodotView *)godotView {
+	return mainGodotView;
+}
+#endif
+
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
 	// TODO: might be required to make an early return, so app wouldn't crash because of timeout.
@@ -77,9 +96,8 @@ static ViewController *mainViewController = nil;
 	const char *newArgv[] = { arg0 };
 	gargc = sizeof(newArgv) / sizeof(newArgv[0]);
 	gargv = (char **)newArgv;
-	// Pass new arguments to ios_main
-//	int err = ios_main(newArgc, (char **)newArgv);
-	
+	mainGodotView = [GodotVisionView alloc];
+
 #else
 	CGRect windowBounds = [[UIScreen mainScreen] bounds];
 #endif
@@ -94,7 +112,7 @@ static ViewController *mainViewController = nil;
 		exit(0);
 		return NO;
 	}
-
+#if !defined(VISIONOS)
 	ViewController *viewController = [[ViewController alloc] init];
 	viewController.godotView.useCADisplayLink = bool(GLOBAL_DEF("display.iOS/use_cadisplaylink", true)) ? YES : NO;
 	viewController.godotView.renderingInterval = 1.0 / kRenderingFrequency;
@@ -103,6 +121,8 @@ static ViewController *mainViewController = nil;
 
 	// Show the window
 	[self.window makeKeyAndVisible];
+	mainViewController = viewController;
+#endif
 
 	[[NSNotificationCenter defaultCenter]
 			addObserver:self
@@ -110,7 +130,6 @@ static ViewController *mainViewController = nil;
 				   name:AVAudioSessionInterruptionNotification
 				 object:[AVAudioSession sharedInstance]];
 
-	mainViewController = viewController;
 
 	int sessionCategorySetting = GLOBAL_GET("audio/general/ios/session_category");
 
@@ -140,6 +159,14 @@ static ViewController *mainViewController = nil;
 	[[AVAudioSession sharedInstance] setCategory:category withOptions:options error:nil];
 
 	return YES;
+}
+
+- (UISceneConfiguration *)application:(UIApplication *)application
+		configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession
+									   options:(UISceneConnectionOptions *)options {
+	UISceneConfiguration * config = [[UISceneConfiguration alloc] initWithName:nil sessionRole:connectingSceneSession.role];
+	config.delegateClass = [self class];
+	return config;
 }
 
 - (void)onAudioInterruption:(NSNotification *)notification {
@@ -180,6 +207,12 @@ static ViewController *mainViewController = nil;
 
 - (void)applicationDidBecomeActive:(UIApplication *)application {
 	OS_IOS::get_singleton()->on_focus_in();
+}
+- (void)sceneDidBecomeActive:(UIScene *)scene {
+	OS_IOS::get_singleton()->on_focus_in();
+}
+- (void)sceneWillResignActive:(UIScene *)scene {
+	OS_IOS::get_singleton()->on_focus_out();
 }
 
 - (void)applicationDidEnterBackground:(UIApplication *)application {

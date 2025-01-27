@@ -31,6 +31,11 @@
 #import <UIKit/UIKit.h>
 
 @class ViewController;
+#if defined(VISIONOS)
+@class GodotVisionView;
+#else
+@class GodotView;
+#endif
 
 // FIXME: Add support for both OpenGL and Vulkan when OpenGL is implemented again,
 // so it can't be done with compilation time branching.
@@ -38,10 +43,15 @@
 //@interface AppDelegate : NSObject <UIApplicationDelegate, GLViewDelegate> {
 //#endif
 //#if defined(VULKAN_ENABLED)
-@interface AppDelegate : NSObject <UIApplicationDelegate>
+@interface AppDelegate : NSObject <UIApplicationDelegate,UISceneDelegate>
 //#endif
 
 @property(strong, nonatomic) UIWindow *window;
 @property(strong, class, readonly, nonatomic) ViewController *viewController;
+#if defined(VISIONOS)
+@property(strong, class, readonly, nonatomic) GodotVisionView *godotView;
+#else
+@property(strong, class, readonly, nonatomic) GodotView *godotView;
+#endif
 
 @end

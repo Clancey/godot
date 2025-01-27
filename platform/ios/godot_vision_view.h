@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  display_layer.h                                                       */
+/*  godot_view.h                                                          */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,39 +28,36 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#import "godot_vision_view.h"
-#import <OpenGLES/EAGLDrawable.h>
-#import <QuartzCore/QuartzCore.h>
+#import <UIKit/UIKit.h>
+#import <Foundation/Foundation.h>
+#import <CompositorServices/CompositorServices.h>
+#import <Foundation/Foundation.h>
+#import <Metal/Metal.h>
+#import <MetalKit/MetalKit.h>
 
-@protocol DisplayLayer <NSObject>
 
-- (void)startRenderDisplayLayer;
-- (void)stopRenderDisplayLayer;
-- (void)initializeDisplayLayer;
-- (void)layoutDisplayLayer;
+@class GodotVisionView;
+
+@protocol DisplayLayer;
+@protocol GodotViewRendererProtocol;
+
+@interface GodotVisionView : NSObject{}
+
+@property(assign, readonly, nonatomic) BOOL isActive;
+
+@property (nonatomic, assign, assign) cp_frame_timing_t timing;
+@property (nonatomic, assign, assign) cp_frame_t frame;
+@property (nonatomic, assign, assign) cp_drawable_t drawable;
+
+@property(assign, readonly, nonatomic) BOOL canRender;
+@property(assign, readonly, nonatomic) CGRect bounds;
+
+- (GodotVisionView<DisplayLayer> *)initializeRenderingForDriver:(NSString *)driverName;
+- (void)stopRendering;
+- (void)startRendering;
+- (void)drawView;
+- (BOOL)setup:(cp_layer_renderer_t)renderer;
+- (CGSize)screen_get_size:(int)p_screen;
+- (CGRect)get_display_safe_area;
 
 @end
-
-#if defined (VISIONOS)
-@interface GodotMetalLayer : GodotVisionView <DisplayLayer>
-@end
-#else
-// An ugly workaround for iOS simulator
-#if defined(TARGET_OS_SIMULATOR) && TARGET_OS_SIMULATOR
-#if defined(__IPHONE_13_0)
-API_AVAILABLE(ios(13.0))
-@interface GodotMetalLayer : CAMetalLayer <DisplayLayer>
-#else
-@interface GodotMetalLayer : CALayer <DisplayLayer>
-#endif
-#else
-@interface GodotMetalLayer : CAMetalLayer <DisplayLayer>
-#endif
-@end
-#if defined(OPENGL_DISABLED)
-#else
-API_DEPRECATED("OpenGLES is deprecated", ios(2.0, 12.0))
-@interface GodotOpenGLLayer : CAEAGLLayer <DisplayLayer>
-@end
-#endif
-#endif

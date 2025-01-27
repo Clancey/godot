@@ -42,6 +42,7 @@
 #import "metal_objects.h"
 
 #if VISIONOS
+#import "godot_vision_view.h"
 #import <MetalKit/MetalKit.h>
 #import <CompositorServices/CompositorServices.h>
 #endif
@@ -94,7 +95,7 @@ public:
 	struct WindowPlatformData {
 #ifdef __OBJC__
 #ifdef VISIONOS
-		cp_layer_renderer_t __unsafe_unretained layer;;
+		GodotVisionView *__unsafe_unretained layer;;
 #else
 		CAMetalLayer *__unsafe_unretained layer;
 #endif

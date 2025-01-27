@@ -27,7 +27,7 @@
 /* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
-
+#if !defined(VISIONOS)
 #import "view_controller.h"
 
 #import "display_server_ios.h"
@@ -317,3 +317,5 @@
 }
 
 @end
+
+#endif

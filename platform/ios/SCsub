@@ -94,7 +94,7 @@ ios_lib = [
     "keyboard_input_view.mm",
     "key_mapping_ios.mm",
     "ios_terminal_logger.mm",
-    "xr_vision_interop.mm"
+    "godot_vision_view.mm"
 ]
 
 env_ios = env.Clone()

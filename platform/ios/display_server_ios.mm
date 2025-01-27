@@ -47,8 +47,7 @@
 
 #import <GameController/GameController.h>
 #if defined(VISIONOS)
-#import "xr_vision_interop.h"
-#import <CompositorServices/CompositorServices.h>
+#import "godot_vision_view.h"
 #endif
 
 static const float kDisplayServerIOSAcceleration = 1.f;
@@ -74,7 +73,7 @@ DisplayServerIOS::DisplayServerIOS(const String &p_rendering_driver, WindowMode 
 	rendering_device = nullptr;
 
 	#if VISIONOS
-	__unsafe_unretained cp_layer_renderer_t layer = nullptr;
+	GodotVisionView *layer = nullptr;
 	#else
 	CALayer *layer = nullptr;
 	#endif
@@ -94,7 +93,7 @@ DisplayServerIOS::DisplayServerIOS(const String &p_rendering_driver, WindowMode 
 
 #if defined(VULKAN_ENABLED)
 	if (rendering_driver == "vulkan") {
-		layer = [AppDelegate.viewController.godotView initializeRenderingForDriver:@"vulkan"];
+		layer = [AppDelegate.godotView initializeRenderingForDriver:@"vulkan"];
 		if (!layer) {
 			ERR_FAIL_MSG("Failed to create iOS Vulkan rendering layer.");
 		}
@@ -105,12 +104,10 @@ DisplayServerIOS::DisplayServerIOS(const String &p_rendering_driver, WindowMode 
 #ifdef METAL_ENABLED
 	if (rendering_driver == "metal") {
 		if (@available(iOS 14.0, *)) {
+			layer = [AppDelegate.godotView initializeRenderingForDriver:@"metal"];
 			#if VISIONOS
-			cp_layer_renderer_t _l  = [[XRVisionInterop get_singleton] layerRenderer];
-			layer = _l;
-			wpd.metal.layer = _l;
+			wpd.metal.layer = (GodotVisionView *)layer;
 			#else
-			layer = [AppDelegate.viewController.godotView initializeRenderingForDriver:@"metal"];
 			wpd.metal.layer = (CAMetalLayer *)layer;
 			#endif
 			rendering_context = memnew(RenderingContextDriverMetal);
@@ -150,12 +147,9 @@ DisplayServerIOS::DisplayServerIOS(const String &p_rendering_driver, WindowMode 
 			r_error = ERR_UNAVAILABLE;
 			return;
 		}
-		#if VISIONOS_SCREEN_HEIGHT
-		CGSize viewSize = [[XRVisionInterop get_singleton] getResolution];
-		Size2i size = Size2i(viewSize.width, viewSize.height);
-		#else
 		Size2i size = Size2i(layer.bounds.size.width, layer.bounds.size.height) * screen_get_max_scale();
-		#endif
+		// print_line(vformat("Layer Bounds: %s",layer.bounds));
+		print_line(vformat("Window Size: %s",size));
 		rendering_context->window_set_size(MAIN_WINDOW_ID, size.width, size.height);
 		rendering_context->window_set_vsync_mode(MAIN_WINDOW_ID, p_vsync_mode);
 
@@ -478,15 +472,9 @@ void DisplayServerIOS::emit_system_theme_changed() {
 }
 
 Rect2i DisplayServerIOS::get_display_safe_area() const {
-	UIEdgeInsets insets = UIEdgeInsetsZero;
-	UIView *view = AppDelegate.viewController.godotView;
-	if ([view respondsToSelector:@selector(safeAreaInsets)]) {
-		insets = [view safeAreaInsets];
-	}
-	float scale = screen_get_scale();
-	Size2i insets_position = Size2i(insets.left, insets.top) * scale;
-	Size2i insets_size = Size2i(insets.left + insets.right, insets.top + insets.bottom) * scale;
-	return Rect2i(screen_get_position() + insets_position, screen_get_size() - insets_size);
+	CGRect rect = [AppDelegate.godotView get_display_safe_area];
+
+	return Rect2i(Point2i(rect.origin.x,rect.origin.y),Size2i(rect.size.width,rect.size.height));
 }
 
 int DisplayServerIOS::get_screen_count() const {
@@ -502,13 +490,12 @@ Point2i DisplayServerIOS::screen_get_position(int p_screen) const {
 }
 
 Size2i DisplayServerIOS::screen_get_size(int p_screen) const {
-	CALayer *layer = AppDelegate.viewController.godotView.renderingLayer;
-
-	if (!layer) {
+	if (!AppDelegate.godotView) {
 		return Size2i();
 	}
+	CGSize size = AppDelegate.godotView.bounds.size;
 
-	return Size2i(layer.bounds.size.width, layer.bounds.size.height) * screen_get_scale(p_screen);
+	return Size2i(size.width, size.height) * screen_get_scale(p_screen);
 }
 
 Rect2i DisplayServerIOS::screen_get_usable_rect(int p_screen) const {
@@ -570,7 +557,7 @@ float DisplayServerIOS::screen_get_refresh_rate(int p_screen) const {
 
 float DisplayServerIOS::screen_get_scale(int p_screen) const {
 	#if defined(VISIONOS)
-	return VISIONOS_SCREEN_SCALE;
+	return 1;
 	#else
 	return [UIScreen mainScreen].scale;
 	#endif
@@ -593,10 +580,14 @@ int64_t DisplayServerIOS::window_get_native_handle(HandleType p_handle_type, Win
 			return 0; // Not supported.
 		}
 		case WINDOW_HANDLE: {
+			#if VISIONOS
+			return (int64_t)AppDelegate.godotView;
+			#else
 			return (int64_t)AppDelegate.viewController;
+			#endif
 		}
 		case WINDOW_VIEW: {
-			return (int64_t)AppDelegate.viewController.godotView;
+			return (int64_t)AppDelegate.godotView;
 		}
 		default: {
 			return 0;
@@ -662,10 +653,8 @@ void DisplayServerIOS::window_set_size(const Size2i p_size, WindowID p_window) {
 
 Size2i DisplayServerIOS::window_get_size(WindowID p_window) const {
 	#if defined(VISIONOS)
-	CGSize size = [XRVisionInterop get_singleton].getResolution;
+	CGSize size = [AppDelegate godotView].bounds.size;
 	return Size2i(size.width, size.height);
-//	CGRect screenBounds = [[[[[UIApplication sharedApplication] delegate] window] rootViewController] view].bounds;
-    // return Size2i(VISIONOS_SCREEN_WIDTH, VISIONOS_SCREEN_HEIGHT);
 	#else
 	CGRect screenBounds = [UIScreen mainScreen].bounds;
 	return Size2i(screenBounds.size.width, screenBounds.size.height) * screen_get_max_scale();
@@ -714,11 +703,13 @@ float DisplayServerIOS::screen_get_max_scale() const {
 
 void DisplayServerIOS::screen_set_orientation(DisplayServer::ScreenOrientation p_orientation, int p_screen) {
 	screen_orientation = p_orientation;
+	#if !defined(VISIONOS)
 	if (@available(iOS 16.0, *)) {
 		[AppDelegate.viewController setNeedsUpdateOfSupportedInterfaceOrientations];
 	} else {
 		[UIViewController attemptRotationToDeviceOrientation];
 	}
+	#endif
 }
 
 DisplayServer::ScreenOrientation DisplayServerIOS::screen_get_orientation(int p_screen) const {
@@ -749,7 +740,8 @@ _FORCE_INLINE_ int _convert_utf32_offset_to_utf16(const String &p_existing_text,
 
 void DisplayServerIOS::virtual_keyboard_show(const String &p_existing_text, const Rect2 &p_screen_rect, VirtualKeyboardType p_type, int p_max_length, int p_cursor_start, int p_cursor_end) {
 	NSString *existingString = [[NSString alloc] initWithUTF8String:p_existing_text.utf8().get_data()];
-
+	//TODO Move this to the ViewController, and fix it for VisionOS
+#if !defined(VISIONOS)
 	AppDelegate.viewController.keyboardView.keyboardType = UIKeyboardTypeDefault;
 	AppDelegate.viewController.keyboardView.textContentType = nil;
 	switch (p_type) {
@@ -787,18 +779,32 @@ void DisplayServerIOS::virtual_keyboard_show(const String &p_existing_text, cons
 			becomeFirstResponderWithString:existingString
 							   cursorStart:_convert_utf32_offset_to_utf16(p_existing_text, p_cursor_start)
 								 cursorEnd:_convert_utf32_offset_to_utf16(p_existing_text, p_cursor_end)];
+	#endif
 }
 
 bool DisplayServerIOS::is_keyboard_active() const {
+	#if defined(VISIONOS)
+	//TODO: Implement VisionOS
+	return false;
+	#else
 	return [AppDelegate.viewController.keyboardView isFirstResponder];
+	#endif
 }
 
 void DisplayServerIOS::virtual_keyboard_hide() {
+	#if defined(VISIONOS)
+	//TODO: Implement VisionOS
+	#else
 	[AppDelegate.viewController.keyboardView resignFirstResponder];
+	#endif
 }
 
 void DisplayServerIOS::virtual_keyboard_set_height(int height) {
+	// #if defined(VISIONOS)
+	// //TODO: Implement VisionOS
+	// #else
 	virtual_keyboard_height = height * screen_get_max_scale();
+	// #endif
 }
 
 int DisplayServerIOS::virtual_keyboard_get_height() const {

@@ -32,7 +32,7 @@
 
 #import "rendering_device_driver_metal.h"
 #ifdef VISIONOS
-#import "xr_vision_interop.h"
+#import "godot_vision_view.h"
 #endif
 
 @protocol MTLDeviceEx <MTLDevice>
@@ -84,7 +84,7 @@ void RenderingContextDriverMetal::driver_free(RenderingDeviceDriver *p_driver) {
 
 class API_AVAILABLE(macos(11.0), ios(14.0), tvos(14.0)) SurfaceLayer : public RenderingContextDriverMetal::Surface {
 #if VISIONOS
-	cp_layer_renderer_t __unsafe_unretained layer = nil;
+	GodotVisionView *__unsafe_unretained layer = nil;
 #else
 	CAMetalLayer *__unsafe_unretained layer = nil;
 #endif
@@ -100,7 +100,7 @@ class API_AVAILABLE(macos(11.0), ios(14.0), tvos(14.0)) SurfaceLayer : public Re
 
 public:
 #if VISIONOS
-	SurfaceLayer(cp_layer_renderer_t __autoreleasing p_layer, id<MTLDevice> p_device) :
+	SurfaceLayer(GodotVisionView *p_layer, id<MTLDevice> p_device) :
 #else
 	SurfaceLayer(CAMetalLayer *p_layer, id<MTLDevice> p_device) :
 #endif
@@ -174,12 +174,7 @@ public:
 
 //For vision OS, I need to request this...
 #if defined(VISIONOS)
-		XRVisionInterop *xr = [XRVisionInterop get_singleton];
-		cp_drawable_t drawable = [xr drawable];
-		if(drawable == nil) {
-			NSLog(@"No drawable available");
-		}
-
+		cp_drawable_t drawable = layer.drawable;
 #else
 		id<CAMetalDrawable> drawable = layer.nextDrawable;
 		ERR_FAIL_NULL_V_MSG(drawable, RDD::FramebufferID(), "no drawable available");

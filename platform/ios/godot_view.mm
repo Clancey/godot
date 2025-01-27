@@ -27,7 +27,7 @@
 /* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
-
+#if !defined(VISIONOS)
 #import "godot_view.h"
 
 #import "display_layer.h"
@@ -39,9 +39,6 @@
 #include "core/string/ustring.h"
 
 #import <CoreMotion/CoreMotion.h>
-#if defined(VISIONOS)
-#import "ios.h" // @visionOS TODO: need VISIONOS_SCREEN_SCALE, but maybe there is a better header it could go in?
-#endif
 
 static const int max_touches = 32;
 static const float earth_gravity = 9.80665;
@@ -119,6 +116,20 @@ static const float earth_gravity = 9.80665;
 	return self;
 }
 
+- (Size2i)screen_get_size:(int)p_screen{
+	float scale = [UIScreen mainScreen].scale;
+	return Size2i(layer.bounds.size.width, layer.bounds.size.height) * scale;
+}
+- (Rect2i)get_display_safe_area{
+	UIEdgeInsets insets = UIEdgeInsetsZero;
+	if ([self respondsToSelector:@selector(safeAreaInsets)]) {
+		insets = [self safeAreaInsets];
+	}
+	float scale = [UIScreen mainScreen].scale;
+	Size2i insets_position = Size2i(insets.left, insets.top) * scale;
+	Size2i insets_size = Size2i(insets.left + insets.right, insets.top + insets.bottom) * scale;
+	return Rect2i(screen_get_position() + insets_position, screen_get_size() - insets_size);
+}
 - (instancetype)initWithFrame:(CGRect)frame {
 	self = [super initWithFrame:frame];
 
@@ -157,11 +168,7 @@ static const float earth_gravity = 9.80665;
 }
 
 - (void)godot_commonInit {
-	#if defined(VISIONOS)
-	self.contentScaleFactor = VISIONOS_SCREEN_SCALE;
-	#else
 	self.contentScaleFactor = [UIScreen mainScreen].scale;
-	#endif
 
 	[self initTouches];
 
@@ -494,3 +501,4 @@ static const float earth_gravity = 9.80665;
 }
 
 @end
+#endif

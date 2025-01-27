@@ -34,7 +34,11 @@
 
 #import "app_delegate.h"
 #import "display_server_ios.h"
+#if defined(VISIONOS)
+#import "godot_vision_view.h"
+#else
 #import "godot_view.h"
+#endif
 #import "ios_terminal_logger.h"
 #import "view_controller.h"
 
@@ -127,7 +131,6 @@ void OS_IOS::initialize() {
 }
 
 void OS_IOS::initialize_modules() {
-//	NSLog(@"Initializing modules");
 	ios = memnew(iOS);
 	Engine::get_singleton()->add_singleton(Engine::Singleton("iOS", ios));
 
@@ -167,15 +170,15 @@ void OS_IOS::delete_main_loop() {
 }
 
 bool OS_IOS::iterate() {
-//	if (!main_loop) {
-//		return true;
-//	}
+	if (!main_loop) {
+		return true;
+	}
 
 	if (DisplayServer::get_singleton()) {
 		DisplayServer::get_singleton()->process_events();
 	}
 
-//	joypad_apple->process_joypads();
+	joypad_apple->process_joypads();
 
 	return Main::iteration();
 }
@@ -622,7 +625,7 @@ void OS_IOS::on_focus_out() {
 			OS::get_singleton()->get_main_loop()->notification(MainLoop::NOTIFICATION_APPLICATION_FOCUS_OUT);
 		}
 
-		[AppDelegate.viewController.godotView stopRendering];
+		[AppDelegate.godotView stopRendering];
 
 		audio_driver.stop();
 	}
@@ -639,8 +642,8 @@ void OS_IOS::on_focus_in() {
 		if (OS::get_singleton()->get_main_loop()) {
 			OS::get_singleton()->get_main_loop()->notification(MainLoop::NOTIFICATION_APPLICATION_FOCUS_IN);
 		}
-
-		[AppDelegate.viewController.godotView startRendering];
+		
+		[AppDelegate.godotView startRendering];
 
 		audio_driver.start();
 	}
