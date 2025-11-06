@@ -116,35 +116,36 @@ protected:
 	float _compute_reference_multiplier(RD::ColorSpace p_color_space, const float p_reference_luminance, const float p_linear_luminance_scale);
 
 public:
-	virtual RendererUtilities *get_utilities() override { return utilities; }
-	virtual RendererLightStorage *get_light_storage() override { return light_storage; }
-	virtual RendererMaterialStorage *get_material_storage() override { return material_storage; }
-	virtual RendererMeshStorage *get_mesh_storage() override { return mesh_storage; }
-	virtual RendererParticlesStorage *get_particles_storage() override { return particles_storage; }
-	virtual RendererTextureStorage *get_texture_storage() override { return texture_storage; }
-	virtual RendererGI *get_gi() override {
+	RendererUtilities *get_utilities() override { return utilities; }
+	RendererLightStorage *get_light_storage() override { return light_storage; }
+	RendererMaterialStorage *get_material_storage() override { return material_storage; }
+	RendererMeshStorage *get_mesh_storage() override { return mesh_storage; }
+	RendererParticlesStorage *get_particles_storage() override { return particles_storage; }
+	RendererTextureStorage *get_texture_storage() override { return texture_storage; }
+	RendererGI *get_gi() override {
 		ERR_FAIL_NULL_V(scene, nullptr);
 		return scene->get_gi();
 	}
-	virtual RendererFog *get_fog() override { return fog; }
-	virtual RendererCanvasRender *get_canvas() override { return canvas; }
-	virtual RendererSceneRender *get_scene() override { return scene; }
+	RendererFog *get_fog() override { return fog; }
+	RendererCanvasRender *get_canvas() override { return canvas; }
+	RendererSceneRender *get_scene() override { return scene; }
 
-	virtual void set_boot_image_with_stretch(const Ref<Image> &p_image, const Color &p_color, RenderingServer::SplashStretchMode p_stretch_mode, bool p_use_filter) override;
+	void set_boot_image_with_stretch(const Ref<Image> &p_image, const Color &p_color, RenderingServer::SplashStretchMode p_stretch_mode, bool p_use_filter) override;
 
-	virtual void initialize() override;
-	virtual void begin_frame(double frame_step) override;
-	virtual void blit_render_targets_to_screen(DisplayServer::WindowID p_screen, const BlitToScreen *p_render_targets, int p_amount) override;
+	void initialize() override;
+	void begin_frame(double frame_step) override;
+	Error prepare_screen_for_drawing(DisplayServer::WindowID p_screen) override;
+	void blit_render_targets_to_screen(DisplayServer::WindowID p_screen, const BlitToScreen *p_render_targets, int p_amount) override;
 
-	virtual bool is_opengl() override { return false; }
-	virtual void gl_end_frame(bool p_swap_buffers) override {}
-	virtual void end_frame(bool p_present) override;
-	virtual void finalize() override;
+	bool is_opengl() override { return false; }
+	void gl_end_frame(bool p_swap_buffers) override {}
+	void end_frame(bool p_present) override;
+	void finalize() override;
 
-	_ALWAYS_INLINE_ virtual uint64_t get_frame_number() const override { return frame; }
-	_ALWAYS_INLINE_ virtual double get_frame_delta_time() const override { return delta; }
-	_ALWAYS_INLINE_ virtual double get_total_time() const override { return time; }
-	_ALWAYS_INLINE_ virtual bool can_create_resources_async() const override { return true; }
+	_ALWAYS_INLINE_ uint64_t get_frame_number() const override { return frame; }
+	_ALWAYS_INLINE_ double get_frame_delta_time() const override { return delta; }
+	_ALWAYS_INLINE_ double get_total_time() const override { return time; }
+	_ALWAYS_INLINE_ bool can_create_resources_async() const override { return true; }
 
 	virtual bool is_xr_enabled() const override { return RendererCompositor::is_xr_enabled(); }
 
