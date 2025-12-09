@@ -892,10 +892,6 @@ void RendererViewport::draw_viewports(bool p_swap_buffers) {
 				_draw_viewport(vp);
 
 				Vector<BlitToScreen> blits = xr_interface->post_draw_viewport(vp->render_target, vp->viewport_to_screen_rect);
-#if defined(VISIONOS_ENABLED)
-				// On visionOS there's no blit, but we need to acquire the dummy frame buffer
-				RSG::rasterizer->prepare_screen_for_drawing(DisplayServer::MAIN_WINDOW_ID);
-#else
 				// Blit eyes
 				if (vp->viewport_to_screen != DisplayServer::INVALID_WINDOW_ID) {
 					if (RSG::rasterizer->is_opengl()) {
@@ -913,7 +909,6 @@ void RendererViewport::draw_viewports(bool p_swap_buffers) {
 						}
 					}
 				}
-#endif
 			}
 		} else
 #endif // XR_DISABLED
