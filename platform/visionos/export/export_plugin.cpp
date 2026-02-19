@@ -49,6 +49,12 @@ enum UpperLimbVisibilityMode {
 	UPPER_LIMB_VISIBILITY_HIDDEN = 2,
 };
 
+enum PersistentSystemOverlaysMode {
+	PERSISTENT_SYSTEM_OVERLAYS_AUTO = 0,
+	PERSISTENT_SYSTEM_OVERLAYS_VISIBLE = 1,
+	PERSISTENT_SYSTEM_OVERLAYS_HIDDEN = 2,
+};
+
 bool _plist_has_key(const String &p_plist_content, const String &p_key) {
 	return p_plist_content.contains("<key>" + p_key + "</key>");
 }
@@ -57,6 +63,7 @@ String _build_game_controller_plist_content(const Ref<EditorExportPreset> &p_pre
 	const GameControllerInteractionMode interaction_mode = (GameControllerInteractionMode)(int)p_preset->get("application/game_controller_interaction");
 	const bool controller_interaction_enabled = interaction_mode != GAME_CONTROLLER_INTERACTION_DISABLED;
 	const UpperLimbVisibilityMode upper_limb_visibility_mode = (UpperLimbVisibilityMode)(int)p_preset->get("application/upper_limb_visibility");
+	const PersistentSystemOverlaysMode persistent_system_overlays_mode = (PersistentSystemOverlaysMode)(int)p_preset->get("application/persistent_system_overlays");
 	String plist;
 
 	if (controller_interaction_enabled) {
@@ -120,6 +127,22 @@ String _build_game_controller_plist_content(const Ref<EditorExportPreset> &p_pre
 		}
 	}
 
+	if (!_plist_has_key(p_existing_plist_content, "GodotPersistentSystemOverlays")) {
+		switch (persistent_system_overlays_mode) {
+			case PERSISTENT_SYSTEM_OVERLAYS_VISIBLE:
+				plist += "<key>GodotPersistentSystemOverlays</key>\n";
+				plist += "<string>Visible</string>\n";
+				break;
+			case PERSISTENT_SYSTEM_OVERLAYS_HIDDEN:
+				plist += "<key>GodotPersistentSystemOverlays</key>\n";
+				plist += "<string>Hidden</string>\n";
+				break;
+			case PERSISTENT_SYSTEM_OVERLAYS_AUTO:
+			default:
+				break;
+		}
+	}
+
 	if (!_plist_has_key(p_existing_plist_content, "NSWorldSensingUsageDescription")) {
 		String description = p_preset->get("privacy/world_sensing_usage_description");
 		if (!description.is_empty()) {
@@ -158,6 +181,7 @@ void EditorExportPlatformVisionOS::get_export_options(List<ExportOption> *r_opti
 	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/immersion_style", PROPERTY_HINT_ENUM, "Full,Mixed"), 1));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/game_controller_interaction", PROPERTY_HINT_ENUM, "Disabled,Supported,Required"), 0));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/upper_limb_visibility", PROPERTY_HINT_ENUM, "Auto,Visible,Hidden"), 0));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/persistent_system_overlays", PROPERTY_HINT_ENUM, "Auto,Visible,Hidden"), 0));
 
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "privacy/hands_tracking_usage_description", PROPERTY_HINT_PLACEHOLDER_TEXT, "Provide a message if you need access to hand tracking"), ""));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "privacy/accessory_tracking_usage_description", PROPERTY_HINT_PLACEHOLDER_TEXT, "Provide a message if you need access to accessory tracking"), ""));
