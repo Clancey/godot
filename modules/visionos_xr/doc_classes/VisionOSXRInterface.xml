@@ -1,12 +1,27 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="VisionOSXRInterface" inherits="XRInterface" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
 	<brief_description>
-		visionOS XR implementation for rendering in immersive mode.
+		visionOS XR implementation for immersive rendering, hand interactions, and tracked spatial controllers.
 	</brief_description>
 	<description>
-		This is a visionOS XR implementation for rendering in immersive mode. It uses the Compositor Services framework to render an Immersive scene. It supports the full and mixed immersive modes mode.
+		This is a visionOS XR implementation for rendering in immersive mode. It uses the Compositor Services framework to render an immersive scene and ARKit tracking to provide head, hand, and tracked spatial controller interaction data. It supports the full and mixed immersive modes.
+
+		The interface exposes the following tracker names:
+		[code]head[/code], [code]left_hand[/code], [code]right_hand[/code], [code]/user/hand_tracker/left[/code], and [code]/user/hand_tracker/right[/code].
+
+		For hand controller trackers, the following poses are updated when tracked:
+		[code]default[/code], [code]aim[/code], [code]grip[/code], and [code]skeleton[/code].
+
+		For hand controller trackers, the following inputs are exposed:
+		[code]trigger[/code], [code]trigger_click[/code], [code]grip[/code], [code]grip_click[/code], [code]primary[/code], [code]primary_click[/code], and [code]select_button[/code].
+
+		When tracked spatial controllers are available (for example paired PlayStation VR2 Sense controllers on visionOS 26+), [code]left_hand[/code]/[code]right_hand[/code] controller poses and inputs come from accessory tracking. When no tracked spatial controller is active for a hand, pinch-based hand interaction is used as fallback for compatibility.
+
+		Hand input maps pinch to trigger/primary/grip interactions for compatibility. Haptics are not implemented yet.
 
 		To use this module, you must set 'application/app_role' export setting to 'Immersive'. You can choose the immersion style using the 'application/immersion_style' export setting.
+
+		If your app depends on tracked spatial controllers, configure spatial game controller support in the generated Xcode project capabilities/plist.
 
 		You must use the Metal rendering driver, and only the Mobile renderer is supported for now.
 
@@ -27,6 +42,9 @@
 	<tutorials>
 	</tutorials>
 	<members>
+		<member name="eye_height" type="float" setter="set_eye_height" getter="get_eye_height" default="1.7">
+			Synthetic eye height (in meters) applied in [constant XRInterface.XR_PLAY_AREA_ROOMSCALE] and [constant XRInterface.XR_PLAY_AREA_STAGE] modes to place the floor below the head in ARKit's head-relative tracking space. Set this to [code]0.0[/code] to disable the offset.
+		</member>
 		<member name="xr_play_area_mode" type="int" setter="set_play_area_mode" getter="get_play_area_mode" overrides="XRInterface" enum="XRInterface.PlayAreaMode" default="3" />
 	</members>
 </class>

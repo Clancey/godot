@@ -35,6 +35,104 @@
 
 #include "editor/editor_node.h"
 
+namespace {
+
+enum GameControllerInteractionMode {
+	GAME_CONTROLLER_INTERACTION_DISABLED = 0,
+	GAME_CONTROLLER_INTERACTION_SUPPORTED = 1,
+	GAME_CONTROLLER_INTERACTION_REQUIRED = 2,
+};
+
+enum UpperLimbVisibilityMode {
+	UPPER_LIMB_VISIBILITY_AUTO = 0,
+	UPPER_LIMB_VISIBILITY_VISIBLE = 1,
+	UPPER_LIMB_VISIBILITY_HIDDEN = 2,
+};
+
+bool _plist_has_key(const String &p_plist_content, const String &p_key) {
+	return p_plist_content.contains("<key>" + p_key + "</key>");
+}
+
+String _build_game_controller_plist_content(const Ref<EditorExportPreset> &p_preset, const String &p_existing_plist_content) {
+	const GameControllerInteractionMode interaction_mode = (GameControllerInteractionMode)(int)p_preset->get("application/game_controller_interaction");
+	const bool controller_interaction_enabled = interaction_mode != GAME_CONTROLLER_INTERACTION_DISABLED;
+	const UpperLimbVisibilityMode upper_limb_visibility_mode = (UpperLimbVisibilityMode)(int)p_preset->get("application/upper_limb_visibility");
+	String plist;
+
+	if (controller_interaction_enabled) {
+		if (!_plist_has_key(p_existing_plist_content, "GCSupportsControllerUserInteraction")) {
+			plist += "<key>GCSupportsControllerUserInteraction</key>\n";
+			plist += "<true/>\n";
+		}
+		if (!_plist_has_key(p_existing_plist_content, "GCSupportedGameControllers")) {
+			plist += "<key>GCSupportedGameControllers</key>\n";
+			plist += "<array>\n";
+			plist += "\t<dict>\n";
+			plist += "\t\t<key>ProfileName</key>\n";
+			plist += "\t\t<string>ExtendedGamepad</string>\n";
+			plist += "\t</dict>\n";
+			plist += "\t<dict>\n";
+			plist += "\t\t<key>ProfileName</key>\n";
+			plist += "\t\t<string>SpatialGamepad</string>\n";
+			plist += "\t</dict>\n";
+			plist += "</array>\n";
+		}
+		if (interaction_mode == GAME_CONTROLLER_INTERACTION_REQUIRED && !_plist_has_key(p_existing_plist_content, "GCRequiresControllerUserInteraction")) {
+			plist += "<key>GCRequiresControllerUserInteraction</key>\n";
+			plist += "<dict>\n";
+			plist += "\t<key>visionOS</key>\n";
+			plist += "\t<true/>\n";
+			plist += "</dict>\n";
+		}
+	}
+
+	if (!_plist_has_key(p_existing_plist_content, "NSHandsTrackingUsageDescription")) {
+		String description = p_preset->get("privacy/hands_tracking_usage_description");
+		if (description.is_empty()) {
+			description = "This app uses hand tracking for spatial interaction.";
+		}
+		plist += "<key>NSHandsTrackingUsageDescription</key>\n";
+		plist += "<string>" + description.xml_escape(true) + "</string>\n";
+	}
+
+	if (controller_interaction_enabled && !_plist_has_key(p_existing_plist_content, "NSAccessoryTrackingUsageDescription")) {
+		String description = p_preset->get("privacy/accessory_tracking_usage_description");
+		if (description.is_empty()) {
+			description = "This app uses accessory tracking to track spatial game controllers.";
+		}
+		plist += "<key>NSAccessoryTrackingUsageDescription</key>\n";
+		plist += "<string>" + description.xml_escape(true) + "</string>\n";
+	}
+
+	if (!_plist_has_key(p_existing_plist_content, "GodotUpperLimbVisibility")) {
+		switch (upper_limb_visibility_mode) {
+			case UPPER_LIMB_VISIBILITY_VISIBLE:
+				plist += "<key>GodotUpperLimbVisibility</key>\n";
+				plist += "<string>Visible</string>\n";
+				break;
+			case UPPER_LIMB_VISIBILITY_HIDDEN:
+				plist += "<key>GodotUpperLimbVisibility</key>\n";
+				plist += "<string>Hidden</string>\n";
+				break;
+			case UPPER_LIMB_VISIBILITY_AUTO:
+			default:
+				break;
+		}
+	}
+
+	if (!_plist_has_key(p_existing_plist_content, "NSWorldSensingUsageDescription")) {
+		String description = p_preset->get("privacy/world_sensing_usage_description");
+		if (!description.is_empty()) {
+			plist += "<key>NSWorldSensingUsageDescription</key>\n";
+			plist += "<string>" + description.xml_escape(true) + "</string>\n";
+		}
+	}
+
+	return plist;
+}
+
+} // namespace
+
 Vector<String> EditorExportPlatformVisionOS::device_types({ "realityDevice" });
 
 void EditorExportPlatformVisionOS::initialize() {
@@ -59,6 +157,12 @@ void EditorExportPlatformVisionOS::get_export_options(List<ExportOption> *r_opti
 
 	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/app_role", PROPERTY_HINT_ENUM, "Window,Immersive"), 0));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/immersion_style", PROPERTY_HINT_ENUM, "Full,Mixed"), 1));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/game_controller_interaction", PROPERTY_HINT_ENUM, "Disabled,Supported,Required"), 0));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/upper_limb_visibility", PROPERTY_HINT_ENUM, "Auto,Visible,Hidden"), 0));
+
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "privacy/hands_tracking_usage_description", PROPERTY_HINT_PLACEHOLDER_TEXT, "Provide a message if you need access to hand tracking"), ""));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "privacy/accessory_tracking_usage_description", PROPERTY_HINT_PLACEHOLDER_TEXT, "Provide a message if you need access to accessory tracking"), ""));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "privacy/world_sensing_usage_description", PROPERTY_HINT_PLACEHOLDER_TEXT, "Provide a message if you need access to world-sensing data"), ""));
 }
 
 Vector<EditorExportPlatformAppleEmbedded::IconInfo> EditorExportPlatformVisionOS::get_icon_infos() const {
@@ -108,42 +212,49 @@ String EditorExportPlatformVisionOS::_process_config_file_line(const Ref<EditorE
 
 		// Application Scene Manifest
 	} else if (p_line.contains("$application_scene_manifest")) {
+		String value;
 		int app_role_enum = (int)p_preset->get("application/app_role");
-		if (app_role_enum == 0) {
-			// Windowed mode, no Application Scene Manifest needed
-			strnew += p_line.replace("$application_scene_manifest", "") + "\n";
-			return strnew;
+
+		if (app_role_enum != 0) {
+			String initial_immersion_style = "UIImmersionStyleMixed";
+			switch ((int)p_preset->get("application/immersion_style")) {
+				case 0: // Full
+					initial_immersion_style = "UIImmersionStyleFull";
+					break;
+				case 1: // Mixed
+				default:
+					initial_immersion_style = "UIImmersionStyleMixed";
+					break;
+			}
+
+			value += "<key>UIApplicationSceneManifest</key>\n";
+			value += "<dict>\n";
+			value += "\t<key>UIApplicationPreferredDefaultSceneSessionRole</key>\n";
+			value += "\t<string>CPSceneSessionRoleImmersiveSpaceApplication</string>\n";
+			value += "\t<key>UIApplicationSupportsMultipleScenes</key>\n";
+			value += "\t<true/>\n";
+			value += "\t<key>UISceneConfigurations</key>\n";
+			value += "\t<dict>\n";
+			value += "\t\t<key>CPSceneSessionRoleImmersiveSpaceApplication</key>\n";
+			value += "\t\t<array>\n";
+			value += "\t\t\t<dict>\n";
+			value += "\t\t\t\t<key>UISceneInitialImmersionStyle</key>\n";
+			value += "\t\t\t\t<string>" + initial_immersion_style + "</string>\n";
+			value += "\t\t\t</dict>\n";
+			value += "\t\t</array>\n";
+			// Keep the legacy key for compatibility with older parser code paths.
+			value += "\t\t<key>UISceneSessionRoleImmersiveSpaceApplication</key>\n";
+			value += "\t\t<array>\n";
+			value += "\t\t\t<dict>\n";
+			value += "\t\t\t\t<key>UISceneInitialImmersionStyle</key>\n";
+			value += "\t\t\t\t<string>" + initial_immersion_style + "</string>\n";
+			value += "\t\t\t</dict>\n";
+			value += "\t\t</array>\n";
+			value += "\t</dict>\n";
+			value += "</dict>\n";
 		}
 
-		String initial_immersion_style;
-		switch ((int)p_preset->get("application/immersion_style")) {
-			case 0: // Full
-				initial_immersion_style = "UIImmersionStyleFull";
-				break;
-			case 1: // Mixed
-				initial_immersion_style = "UIImmersionStyleMixed";
-				break;
-		}
-
-		String value =
-				"<key>UIApplicationSceneManifest</key>\n"
-				"<dict>\n"
-				"	<key>UIApplicationPreferredDefaultSceneSessionRole</key>\n"
-				"	<string>CPSceneSessionRoleImmersiveSpaceApplication</string>\n"
-				"	  <key>UIApplicationSupportsMultipleScenes</key>\n"
-				"	  <true/>\n"
-				"	  <key>UISceneConfigurations</key>\n"
-				"	  <dict>"
-				"		  <key>UISceneSessionRoleImmersiveSpaceApplication</key>"
-				"		  <array>"
-				"			  <dict>"
-				"				  <key>UISceneInitialImmersionStyle</key>"
-				"				  <string>" +
-				initial_immersion_style + "</string>"
-										  "			  </dict>"
-										  "		  </array>"
-										  "	  </dict>"
-										  "</dict>";
+		value += _build_game_controller_plist_content(p_preset, p_config.plist_content);
 
 		strnew += p_line.replace("$application_scene_manifest", value) + "\n";
 
