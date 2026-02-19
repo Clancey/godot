@@ -47,9 +47,6 @@
 		<member name="application/game_controller_interaction" type="int" setter="" getter="">
 			Configures game controller plist metadata. [code]Disabled[/code] writes no game controller entries. [code]Supported[/code] adds [code]GCSupportsControllerUserInteraction[/code] and [code]GCSupportedGameControllers[/code] with [code]ExtendedGamepad[/code] and [code]SpatialGamepad[/code] profiles. [code]Required[/code] also adds [code]GCRequiresControllerUserInteraction[/code] for [code]visionOS[/code].
 		</member>
-		<member name="application/upper_limb_visibility" type="int" setter="" getter="">
-			Controls preferred system upper-limb visibility for immersive scenes. [code]Auto[/code] keeps the runtime default, except controller-enabled apps hide upper limbs to prevent passthrough overlays over virtual hands/controllers. [code]Visible[/code] forces system upper limbs visible. [code]Hidden[/code] forces system upper limbs hidden.
-		</member>
 		<member name="application/icon_interpolation" type="int" setter="" getter="">
 			Interpolation method used to resize application icon.
 		</member>
@@ -57,6 +54,8 @@
 			The immersion style, only applicable if you have chosen the [code]Immersive[/code] app role. It can be [code]Full[/code] for a VR experience, or [code]Mixed[/code] for a mixed reality experience where the rendered content is display along with the real environment.
 		</member>
 		<member name="application/min_visionos_version" type="String" setter="" getter="">
+		</member>
+		<member name="application/persistent_system_overlays" type="int" setter="" getter="">
 		</member>
 		<member name="application/provisioning_profile_specifier_debug" type="String" setter="" getter="">
 			Name of the provisioning profile. Sets Xcode PROVISIONING_PROFILE_SPECIFIER for debug. [url=https://developer.apple.com/documentation/xcode/build-settings-reference#Provisioning-Profile]Used for manual provisioning[/url].
@@ -80,6 +79,9 @@
 		</member>
 		<member name="application/signature" type="String" setter="" getter="">
 			A four-character creator code that is specific to the bundle. Optional.
+		</member>
+		<member name="application/upper_limb_visibility" type="int" setter="" getter="">
+			Controls preferred system upper-limb visibility for immersive scenes. [code]Auto[/code] keeps the runtime default, except controller-enabled apps hide upper limbs to prevent passthrough overlays over virtual hands/controllers. [code]Visible[/code] forces system upper limbs visible. [code]Hidden[/code] forces system upper limbs hidden.
 		</member>
 		<member name="application/version" type="String" setter="" getter="">
 			Machine-readable application version in the [code]major.minor.patch[/code] format. Can only contain numeric characters ([code]0-9[/code]) and periods ([code].[/code]). This must be incremented with every new release pushed to the App Store. Falls back to [member ProjectSettings.application/config/version] if left empty.
@@ -135,12 +137,6 @@
 		</member>
 		<member name="privacy/accessory_tracking_usage_description" type="String" setter="" getter="">
 			A message displayed when requesting permission to track spatial accessories, such as paired spatial game controllers.
-		</member>
-		<member name="privacy/hands_tracking_usage_description" type="String" setter="" getter="">
-			A message displayed when requesting permission to access hand-tracking data.
-		</member>
-		<member name="privacy/world_sensing_usage_description" type="String" setter="" getter="">
-			A message displayed when requesting permission to access world-sensing data, such as plane detection, image tracking, or scene reconstruction.
 		</member>
 		<member name="privacy/active_keyboard_access_reasons" type="int" setter="" getter="">
 			The reasons your app use active keyboard API. See [url=https://developer.apple.com/documentation/bundleresources/privacy_manifest_files/describing_use_of_required_reason_api]Describing use of required reason API[/url].
@@ -577,6 +573,9 @@
 		<member name="privacy/file_timestamp_access_reasons" type="int" setter="" getter="">
 			The reasons your app use file timestamp/metadata API. See [url=https://developer.apple.com/documentation/bundleresources/privacy_manifest_files/describing_use_of_required_reason_api]Describing use of required reason API[/url].
 		</member>
+		<member name="privacy/hands_tracking_usage_description" type="String" setter="" getter="">
+			A message displayed when requesting permission to access hand-tracking data.
+		</member>
 		<member name="privacy/microphone_usage_description" type="String" setter="" getter="">
 			A message displayed when requesting access to the device's microphone (in English).
 		</member>
@@ -600,6 +599,9 @@
 		</member>
 		<member name="privacy/user_defaults_access_reasons" type="int" setter="" getter="">
 			The reasons your app use user defaults API. See [url=https://developer.apple.com/documentation/bundleresources/privacy_manifest_files/describing_use_of_required_reason_api]Describing use of required reason API[/url].
+		</member>
+		<member name="privacy/world_sensing_usage_description" type="String" setter="" getter="">
+			A message displayed when requesting permission to access world-sensing data, such as plane detection, image tracking, or scene reconstruction.
 		</member>
 		<member name="shader_baker/enabled" type="bool" setter="" getter="">
 			If [code]true[/code], shaders will be compiled and embedded in the application. This option is only supported when using the Forward+ and Mobile renderers.
