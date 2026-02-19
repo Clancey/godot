@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  godot_app_delegate_visionos.mm                                        */
+/*  godot_app_delegate_service_visionos_bridge.h                          */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,57 +28,10 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#import "godot_app_delegate_service_visionos.h"
-#include "platform/visionos/godot_app_delegate_service_visionos_bridge.h"
+#pragma once
 
-static GDTRenderMode _renderMode = GDTRenderModeWindowed;
-static __weak cp_layer_renderer_t _layerRenderer = nil;
-static __strong cp_layer_renderer_capabilities_t _layerRendererCapabilities = nil;
+#ifdef VISIONOS_ENABLED
 
-@implementation GDTAppDelegateServiceVisionOS
+bool godot_visionos_is_compositor_services_mode();
 
-+ (GDTRenderMode)renderMode {
-	return _renderMode;
-}
-
-+ (void)setRenderMode:(GDTRenderMode)renderMode {
-	_renderMode = renderMode;
-}
-
-+ (cp_layer_renderer_t)layerRenderer {
-	if (_renderMode != GDTRenderModeCompositorServices) {
-		NSLog(@"GDTAppDelegate error, layerRenderer only supported in Compositor Services mode");
-		return nil;
-	}
-	return _layerRenderer;
-}
-
-+ (void)setLayerRenderer:(cp_layer_renderer_t)layerRenderer {
-	if (_renderMode != GDTRenderModeCompositorServices) {
-		NSLog(@"GDTAppDelegate error, layerRenderer only supported in Compositor Services mode");
-		return;
-	}
-	_layerRenderer = layerRenderer;
-}
-
-+ (cp_layer_renderer_capabilities_t)layerRendererCapabilities {
-	if (_renderMode != GDTRenderModeCompositorServices) {
-		NSLog(@"GDTAppDelegate error, layerRenderer only supported in Compositor Services mode");
-		return nil;
-	}
-	return _layerRendererCapabilities;
-}
-
-+ (void)setLayerRendererCapabilities:(cp_layer_renderer_capabilities_t)layerRendererCapabilities {
-	if (_renderMode != GDTRenderModeCompositorServices) {
-		NSLog(@"GDTAppDelegate error, layerRenderer only supported in Compositor Services mode");
-		return;
-	}
-	_layerRendererCapabilities = layerRendererCapabilities;
-}
-
-@end
-
-bool godot_visionos_is_compositor_services_mode() {
-	return GDTAppDelegateServiceVisionOS.renderMode == GDTRenderModeCompositorServices;
-}
+#endif

@@ -60,6 +60,7 @@
 #include "core/templates/hash_map.h"
 #include "drivers/apple/foundation_helpers.h"
 
+#include <objc/runtime.h>
 #include <os/log.h>
 #include <os/signpost.h>
 #include <Metal/Metal.hpp>
@@ -68,6 +69,17 @@
 #ifndef MTLGPUAddress
 typedef uint64_t MTLGPUAddress;
 #endif
+
+static bool _objc_object_responds_to_selector(const void *p_obj, const char *p_selector_name) {
+	if (p_obj == nullptr) {
+		return false;
+	}
+	Class cls = object_getClass((id)p_obj);
+	if (cls == nullptr) {
+		return false;
+	}
+	return class_getInstanceMethod(cls, sel_registerName(p_selector_name)) != nullptr;
+}
 
 #pragma mark - Logging
 
@@ -94,9 +106,17 @@ static_assert(ENUM_MEMBERS_EQUAL(RDD::COMPARE_OP_ALWAYS, MTL::CompareFunctionAlw
 /*****************/
 
 RDD::BufferID RenderingDeviceDriverMetal::buffer_create(uint64_t p_size, BitField<BufferUsageBits> p_usage, MemoryAllocationType p_allocation_type, uint64_t p_frames_drawn) {
-	const uint64_t original_size = p_size;
+	uint64_t alignment = 16u; // 16 bytes is reasonable for generic buffers.
+	if (p_usage.has_flag(BUFFER_USAGE_UNIFORM_BIT)) {
+		const uint64_t uniform_alignment = device_properties != nullptr ? device_properties->limits.minUniformBufferOffsetAlignment : 256u;
+		alignment = MAX(alignment, uniform_alignment);
+	}
+
+	const uint64_t aligned_size = round_up_to_alignment(p_size, alignment);
+	p_size = aligned_size;
+
 	if (p_usage.has_flag(BUFFER_USAGE_DYNAMIC_PERSISTENT_BIT)) {
-		p_size = round_up_to_alignment(p_size, 16u) * _frame_count;
+		p_size = aligned_size * _frame_count;
 	}
 
 	MTL::ResourceOptions options = 0;
@@ -124,7 +144,7 @@ RDD::BufferID RenderingDeviceDriverMetal::buffer_create(uint64_t p_size, BitFiel
 		dyn_buffer->last_frame_mapped = p_frames_drawn - 1ul;
 #endif
 		dyn_buffer->set_frame_index(0u);
-		dyn_buffer->size_bytes = round_up_to_alignment(original_size, 16u);
+		dyn_buffer->size_bytes = aligned_size;
 	} else {
 		buf_info = memnew(BufferInfo);
 	}
@@ -529,12 +549,12 @@ void RenderingDeviceDriverMetal::texture_free(TextureID p_texture) {
 }
 
 uint64_t RenderingDeviceDriverMetal::texture_get_allocation_size(TextureID p_texture) {
-	id<MTLTexture> __unsafe_unretained obj = rid::get(p_texture);
-	// For when texture contains a MTLRasterizationRateMap as returned by VisionOSXRInterface
-	if (![obj respondsToSelector:@selector(allocatedSize)]) {
+	const void *obj = reinterpret_cast<const void *>(p_texture.id);
+	// For when texture contains a MTLRasterizationRateMap as returned by VisionOSXRInterface.
+	if (!_objc_object_responds_to_selector(obj, "allocatedSize")) {
 		return 0;
 	}
-	return obj.allocatedSize;
+	return reinterpret_cast<MTL::Resource *>(p_texture.id)->allocatedSize();
 }
 
 void RenderingDeviceDriverMetal::texture_get_copyable_layout(TextureID p_texture, const TextureSubresource &p_subresource, TextureCopyableLayout *r_layout) {
@@ -635,6 +655,9 @@ BitField<RDD::TextureUsageBits> RenderingDeviceDriverMetal::texture_get_usages_s
 	if (!flags::any(caps, kMTLFmtCapsRead)) {
 		supported.clear_flag(TEXTURE_USAGE_SAMPLING_BIT);
 	}
+	if (!flags::any(caps, kMTLFmtCapsWrite)) {
+		supported.clear_flag(TEXTURE_USAGE_STORAGE_BIT);
+	}
 	if (!flags::any(caps, kMTLFmtCapsAtomic)) {
 		supported.clear_flag(TEXTURE_USAGE_STORAGE_ATOMIC_BIT);
 	}
@@ -721,30 +744,21 @@ RDD::SamplerID RenderingDeviceDriverMetal::sampler_create(const SamplerState &p_
 	NS::SharedPtr<MTL::SamplerDescriptor> desc = NS::TransferPtr(MTL::SamplerDescriptor::alloc()->init());
 	desc->setSupportArgumentBuffers(true);
 
+	auto get_address_mode = [this](SamplerRepeatMode p_repeat_mode) -> MTL::SamplerAddressMode {
+		MTL::SamplerAddressMode mode = ADDRESS_MODES[p_repeat_mode];
+		if (!device_properties->features.supports_border_color && mode == MTL::SamplerAddressModeClampToBorderColor) {
+			mode = MTL::SamplerAddressModeClampToEdge;
+		}
+		return mode;
+	};
+
 	desc->setMagFilter(p_state.mag_filter == SAMPLER_FILTER_LINEAR ? MTL::SamplerMinMagFilterLinear : MTL::SamplerMinMagFilterNearest);
 	desc->setMinFilter(p_state.min_filter == SAMPLER_FILTER_LINEAR ? MTL::SamplerMinMagFilterLinear : MTL::SamplerMinMagFilterNearest);
 	desc->setMipFilter(p_state.mip_filter == SAMPLER_FILTER_LINEAR ? MTL::SamplerMipFilterLinear : MTL::SamplerMipFilterNearest);
 
-	MTL::SamplerAddressMode address_u = ADDRESS_MODES[p_state.repeat_u];
-	MTL::SamplerAddressMode address_v = ADDRESS_MODES[p_state.repeat_v];
-	MTL::SamplerAddressMode address_w = ADDRESS_MODES[p_state.repeat_w];
-
-	if (!device_properties->features.supports_border_color) {
-		// Default to clamp to edge if border color is not supported.
-		if (address_u == MTL::SamplerAddressModeClampToBorderColor) {
-			address_u = MTL::SamplerAddressModeClampToEdge;
-		}
-		if (address_v == MTL::SamplerAddressModeClampToBorderColor) {
-			address_v = MTL::SamplerAddressModeClampToEdge;
-		}
-		if (address_w == MTL::SamplerAddressModeClampToBorderColor) {
-			address_w = MTL::SamplerAddressModeClampToEdge;
-		}
-	}
-
-	desc->setSAddressMode(address_u);
-	desc->setTAddressMode(address_v);
-	desc->setRAddressMode(address_w);
+	desc->setSAddressMode(get_address_mode(p_state.repeat_u));
+	desc->setTAddressMode(get_address_mode(p_state.repeat_v));
+	desc->setRAddressMode(get_address_mode(p_state.repeat_w));
 
 	if (p_state.use_anisotropy) {
 		desc->setMaxAnisotropy(p_state.anisotropy_max);
@@ -990,28 +1004,28 @@ RDD::FramebufferID RenderingDeviceDriverMetal::framebuffer_create(RenderPassID p
 
 	Vector<MTL::Texture *> textures;
 	textures.resize(p_attachments.size());
-	id<MTLRasterizationRateMap> rasterization_rate_map = nil;
+	MTL::RasterizationRateMap *rasterization_rate_map = nullptr;
 
 	for (uint32_t i = 0; i < p_attachments.size(); i += 1) {
 		MDAttachment const &a = pass->attachments[i];
-		id native_attachment = rid::get(p_attachments[i]);
-		id<MTLTexture> native_texture = nil;
+		const void *native_attachment = reinterpret_cast<const void *>(p_attachments[i].id);
+		MTL::Texture *native_texture = nullptr;
 		bool attachment_is_rasterization_rate_map = false;
-		if ([native_attachment conformsToProtocol:@protocol(MTLRasterizationRateMap)]) {
-			rasterization_rate_map = native_attachment;
+		if (_objc_object_responds_to_selector(native_attachment, "textureType")) {
+			native_texture = rid::get<MTL::Texture>(p_attachments[i]);
+		} else if (_objc_object_responds_to_selector(native_attachment, "screenSize")) {
+			rasterization_rate_map = reinterpret_cast<MTL::RasterizationRateMap *>(p_attachments[i].id);
 			attachment_is_rasterization_rate_map = true;
-		} else if ([native_attachment conformsToProtocol:@protocol(MTLTexture)]) {
-			native_texture = native_attachment;
 		}
-		if (native_texture == nil && !attachment_is_rasterization_rate_map) {
+		if (native_texture == nullptr && !attachment_is_rasterization_rate_map) {
 #if DEV_ENABLED
 			WARN_PRINT("Invalid texture for attachment " + itos(i));
 #endif
 		}
-		if (a.samples > 1) {
-			if (native_texture.sampleCount != a.samples) {
+		if (a.samples > 1 && native_texture != nullptr) {
+			if (native_texture->sampleCount() != a.samples) {
 #if DEV_ENABLED
-				WARN_PRINT("Mismatched sample count for attachment " + itos(i) + "; expected " + itos(a.samples) + ", got " + itos(native_texture.sampleCount));
+				WARN_PRINT("Mismatched sample count for attachment " + itos(i) + "; expected " + itos(a.samples) + ", got " + itos(native_texture->sampleCount()));
 #endif
 			}
 		}
@@ -1977,7 +1991,11 @@ RDD::PipelineID RenderingDeviceDriverMetal::render_pipeline_create(
 
 	// Rasterization.
 	desc->setRasterizationEnabled(!p_rasterization_state.discard_primitives);
+#if TARGET_OS_SIMULATOR
+	pipeline->raster_state.clip_mode = MTL::DepthClipModeClip;
+#else
 	pipeline->raster_state.clip_mode = p_rasterization_state.enable_depth_clamp ? MTL::DepthClipModeClamp : MTL::DepthClipModeClip;
+#endif
 	pipeline->raster_state.fill_mode = p_rasterization_state.wireframe ? MTL::TriangleFillModeLines : MTL::TriangleFillModeFill;
 
 	static const MTL::CullMode CULL_MODE[3] = {
@@ -2666,10 +2684,10 @@ bool RenderingDeviceDriverMetal::has_feature(Features p_feature) {
 		case SUPPORTS_POINT_SIZE:
 			return true;
 		case SUPPORTS_RASTERIZATION_RATE_MAP: {
-			bool is_supported = [device supportsRasterizationRateMapWithLayerCount:1];
+			bool is_supported = device->supportsRasterizationRateMap(1);
 #if defined(VISIONOS_ENABLED)
 			// We need to support 2 layers on visionOS. Using more than 2 layers shouldn't be needed.
-			is_supported &= [device supportsRasterizationRateMapWithLayerCount:2];
+			is_supported &= device->supportsRasterizationRateMap(2);
 #endif
 			return is_supported;
 		}
@@ -2874,7 +2892,9 @@ Error RenderingDeviceDriverMetal::_initialize(uint32_t p_device_index, uint32_t 
 		print_verbose("- Metal multiview not supported");
 	}
 
-	// The Metal renderer requires Apple4 family. This is 2017 era A11 chips and newer.
+	// The Metal renderer requires Apple4 family on physical Apple Embedded devices.
+	// Simulator drivers may not expose Apple GPU families even when rendering is supported.
+#if !TARGET_OS_SIMULATOR
 	if (device_properties->features.highestFamily < MTL::GPUFamilyApple4) {
 		String error_string = vformat("Your Apple GPU does not support the following features, which are required to use Metal-based renderers in Godot:\n\n");
 		if (!device_properties->features.imageCubeArray) {
@@ -2890,6 +2910,7 @@ Error RenderingDeviceDriverMetal::_initialize(uint32_t p_device_index, uint32_t 
 
 		return ERR_CANT_CREATE;
 	}
+#endif
 
 	return OK;
 }

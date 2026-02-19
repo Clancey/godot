@@ -105,7 +105,7 @@ public:
 				device(p_device) {}
 		virtual ~Surface() = default;
 
-		virtual MTLPixelFormat get_pixel_format() const = 0;
+		virtual MTL::PixelFormat get_pixel_format() const = 0;
 		virtual Error resize(uint32_t p_desired_framebuffer_count) = 0;
 		virtual RDD::FramebufferID acquire_next_frame_buffer() = 0;
 		virtual void present(MTL3::MDCommandBuffer *p_cmd_buffer) = 0;

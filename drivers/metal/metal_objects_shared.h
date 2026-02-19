@@ -287,9 +287,9 @@ class API_AVAILABLE(macos(11.0), ios(14.0), tvos(14.0), visionos(2.0)) MDFrameBu
 
 public:
 	Size2i size;
-	id<MTLRasterizationRateMap> rasterization_rate_map = nil;
+	MTL::RasterizationRateMap *rasterization_rate_map = nullptr;
 
-	MDFrameBuffer(Vector<MTL::Texture> p_textures, Size2i p_size) :
+	MDFrameBuffer(Vector<MTL::Texture *> p_textures, Size2i p_size) :
 			textures(p_textures), size(p_size) {}
 	MDFrameBuffer() {}
 

@@ -42,9 +42,8 @@
 #include <objc/message.h>
 
 #if defined(VISIONOS_ENABLED)
-#include "modules/visionos_xr/visionos_xr_interface.h"
-#import "platform/visionos/godot_app_delegate_service_visionos.h"
-#import <CompositorServices/CompositorServices.h>
+#include "modules/visionos_xr/visionos_xr_interface_bridge.h"
+#include "platform/visionos/godot_app_delegate_service_visionos_bridge.h"
 #endif
 
 #pragma mark - Logging
@@ -69,16 +68,7 @@ Error RenderingContextDriverMetal::initialize() {
 		capture_available = true;
 	}
 
-#if TARGET_OS_VISION
-	GDTRenderMode app_delegate_render_mode = GDTAppDelegateServiceVisionOS.renderMode;
-	if (app_delegate_render_mode == GDTRenderModeCompositorServices) {
-		metal_device = cp_layer_renderer_get_device(GDTAppDelegateServiceVisionOS.layerRenderer);
-	} else if (app_delegate_render_mode == GDTRenderModeWindowed) {
-		metal_device = MTLCreateSystemDefaultDevice();
-	}
-#else
-	metal_device = MTLCreateSystemDefaultDevice();
-#endif
+	metal_device = MTL::CreateSystemDefaultDevice();
 
 #if TARGET_OS_OSX
 	if (__builtin_available(macOS 13.3, *)) {
@@ -135,8 +125,8 @@ public:
 		layer = nullptr;
 	}
 
-	MTLPixelFormat get_pixel_format() const override final {
-		return MTLPixelFormatBGRA8Unorm;
+	MTL::PixelFormat get_pixel_format() const override final {
+		return MTL::PixelFormatBGRA8Unorm;
 	}
 
 	Error resize(uint32_t p_desired_framebuffer_count) override final {
@@ -201,7 +191,6 @@ public:
 		if (count == 0) {
 			return;
 		}
-
 		// Release texture and drawable.
 		frame_buffers[front].unset_texture(0);
 		MTL::Drawable *drawable = drawables[front];
@@ -211,7 +200,11 @@ public:
 		front = (front + 1) % frame_buffers.size();
 
 		if (vsync_mode != DisplayServer::VSYNC_DISABLED) {
+#if defined(VISIONOS_ENABLED)
+			p_cmd_buffer->get_command_buffer()->presentDrawable(drawable);
+#else
 			p_cmd_buffer->get_command_buffer()->presentDrawableAfterMinimumDuration(drawable, present_minimum_duration);
+#endif
 		} else {
 			p_cmd_buffer->get_command_buffer()->presentDrawable(drawable);
 		}
@@ -276,8 +269,8 @@ public:
 		memdelete_arr(frame_buffers);
 	}
 
-	MTLPixelFormat get_pixel_format() const override final {
-		return MTLPixelFormatBGRA8Unorm;
+	MTL::PixelFormat get_pixel_format() const override final {
+		return MTL::PixelFormatBGRA8Unorm;
 	}
 
 	Error resize(uint32_t p_desired_framebuffer_count) override final {
@@ -371,7 +364,7 @@ class SurfaceCompositorServices : public RenderingContextDriverMetal::Surface {
 	MDFrameBuffer dummy_framebuffer;
 
 public:
-	SurfaceCompositorServices(id<MTLDevice> p_device) :
+	SurfaceCompositorServices(MTL::Device *p_device) :
 			Surface(p_device) {
 		dummy_framebuffer.set_texture_count(1);
 	}
@@ -379,8 +372,8 @@ public:
 	~SurfaceCompositorServices() override {
 	}
 
-	MTLPixelFormat get_pixel_format() const override final {
-		return MTLPixelFormatRGBA16Float;
+	MTL::PixelFormat get_pixel_format() const override final {
+		return MTL::PixelFormatRGBA16Float;
 	}
 
 	Error resize(uint32_t p_desired_framebuffer_count) override final {
@@ -389,13 +382,19 @@ public:
 
 	RDD::FramebufferID acquire_next_frame_buffer() override final {
 		return RDD::FramebufferID(&dummy_framebuffer);
-		;
 	}
 
-	void present(MDCommandBuffer *p_cmd_buffer) override final {
-		Ref<VisionOSXRInterface> visionos_xr_interface = VisionOSXRInterface::find_interface();
-		ERR_FAIL_COND_MSG(!visionos_xr_interface.is_valid(), "visionOS VR interface not found or invalid");
-		visionos_xr_interface->encode_present(p_cmd_buffer);
+	void present(MTL3::MDCommandBuffer *p_cmd_buffer) override final {
+		ERR_FAIL_COND_MSG(!godot_visionos_xr_encode_present(p_cmd_buffer), "visionOS XR interface not found or invalid");
+	}
+
+	MTL::Drawable *next_drawable() override final {
+		return nullptr;
+	}
+
+	API_AVAILABLE(macos(26.0), ios(26.0))
+	MTL::ResidencySet *get_residency_set() const override final {
+		return nullptr;
 	}
 };
 #endif
@@ -405,10 +404,9 @@ RenderingContextDriver::SurfaceID RenderingContextDriverMetal::surface_create(co
 
 	Surface *surface = nullptr;
 #if TARGET_OS_VISION
-	GDTRenderMode app_delegate_render_mode = GDTAppDelegateServiceVisionOS.renderMode;
-	if (app_delegate_render_mode == GDTRenderModeCompositorServices) {
+	if (godot_visionos_is_compositor_services_mode()) {
 		surface = memnew(SurfaceCompositorServices(metal_device));
-	} else if (app_delegate_render_mode == GDTRenderModeWindowed) {
+	} else {
 		surface = memnew(SurfaceLayer(wpd->layer, metal_device));
 	}
 #else

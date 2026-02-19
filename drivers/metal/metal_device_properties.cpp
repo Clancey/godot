@@ -54,11 +54,15 @@
 
 #include "servers/rendering/renderer_rd/effects/metal_fx.h"
 
+#include <Metal/Metal.hpp>
+#if __has_include(<MetalFX/MetalFX.hpp>)
 #include <MetalFX/MetalFX.hpp>
+#define GODOT_METALFX_AVAILABLE 1
+#else
+#define GODOT_METALFX_AVAILABLE 0
+#endif
 #include <spirv_cross.hpp>
 #include <spirv_msl.hpp>
-
-#include <unistd.h>
 
 // Common scaling multipliers.
 #define KIBI (1024)
@@ -129,6 +133,10 @@ void MetalDeviceProperties::init_features(MTL::Device *p_device) {
 		features.supports32BitFloatFiltering = p_device->supports32BitFloatFiltering();
 		features.supports32BitMSAA = p_device->supports32BitMSAA();
 	}
+	features.supportsSamplerBorderColor = p_device->supportsFamily(MTL::GPUFamilyApple7);
+#ifdef MTLGPUFamilyMac2
+	features.supportsSamplerBorderColor |= p_device->supportsFamily(MTL::GPUFamilyMac2);
+#endif
 
 	if (__builtin_available(macOS 13.0, iOS 16.0, tvOS 16.0, *)) {
 		features.supports_gpu_address = true;
@@ -180,10 +188,15 @@ void MetalDeviceProperties::init_features(MTL::Device *p_device) {
 	}
 
 	if (__builtin_available(macOS 13.0, iOS 16.0, tvOS 16.0, *)) {
+#if GODOT_METALFX_AVAILABLE
 		features.metal_fx_spatial = MTLFX::SpatialScalerDescriptor::supportsDevice(p_device);
 #ifdef METAL_MFXTEMPORAL_ENABLED
 		features.metal_fx_temporal = MTLFX::TemporalScalerDescriptor::supportsDevice(p_device);
 #else
+		features.metal_fx_temporal = false;
+#endif
+#else
+		features.metal_fx_spatial = false;
 		features.metal_fx_temporal = false;
 #endif
 	}
@@ -324,21 +337,16 @@ void MetalDeviceProperties::init_limits(MTL::Device *p_device) {
 		limits.maxThreadGroupMemoryAllocation = 16352;
 	}
 
-#if TARGET_OS_IOS && !TARGET_OS_MACCATALYST
-	limits.minUniformBufferOffsetAlignment = 64;
-#endif
-
-#if TARGET_OS_OSX
-	// This is Apple Silicon specific.
-	limits.minUniformBufferOffsetAlignment = 16;
-#endif
+	// Metal constant buffer offsets used by set{Vertex,Fragment}Buffer must be 256-byte aligned.
+	// Keep this consistent across Apple platforms, including visionOS simulator/device.
+	limits.minUniformBufferOffsetAlignment = 256;
 
 	limits.maxDrawIndexedIndexValue = std::numeric_limits<uint32_t>::max() - 1;
 
-#ifdef METAL_MFXTEMPORAL_ENABLED
+#if defined(METAL_MFXTEMPORAL_ENABLED) && GODOT_METALFX_AVAILABLE
 	if (__builtin_available(macOS 14.0, iOS 17.0, tvOS 17.0, *)) {
-		limits.temporalScalerInputContentMinScale = MTLFX::TemporalScalerDescriptor::supportedInputContentMinScale(p_device);
-		limits.temporalScalerInputContentMaxScale = MTLFX::TemporalScalerDescriptor::supportedInputContentMaxScale(p_device);
+		limits.temporalScalerInputContentMinScale = (double)MTLFX::TemporalScalerDescriptor::supportedInputContentMinScale(p_device);
+		limits.temporalScalerInputContentMaxScale = (double)MTLFX::TemporalScalerDescriptor::supportedInputContentMaxScale(p_device);
 	} else {
 		// Defaults taken from macOS 14+
 		limits.temporalScalerInputContentMinScale = 1.0;

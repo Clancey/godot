@@ -423,7 +423,17 @@ private:
 	_FORCE_INLINE_ id<MTLCommandBuffer> command_buffer() {
 		DEV_ASSERT(state_begin);
 		if (commandBuffer == nil) {
+#ifdef DEBUG_ENABLED
+			if (@available(macOS 11.0, iOS 14.0, tvOS 14.0, visionOS 1.0, *)) {
+				MTLCommandBufferDescriptor *descriptor = [MTLCommandBufferDescriptor new];
+				descriptor.errorOptions = MTLCommandBufferErrorOptionEncoderExecutionStatus;
+				commandBuffer = [queue commandBufferWithDescriptor:descriptor];
+			} else {
+				commandBuffer = queue.commandBuffer;
+			}
+#else
 			commandBuffer = queue.commandBuffer;
+#endif
 		}
 		return commandBuffer;
 	}
@@ -637,6 +647,10 @@ public:
 
 	_FORCE_INLINE_ id<MTLCommandBuffer> get_command_buffer() const {
 		return commandBuffer;
+	}
+
+	_FORCE_INLINE_ id<MTLCommandBuffer> ensure_command_buffer() {
+		return command_buffer();
 	}
 
 	void begin();
@@ -992,6 +1006,7 @@ public:
 	struct {
 		MTLCullMode cull_mode = MTLCullModeNone;
 		MTLTriangleFillMode fill_mode = MTLTriangleFillModeFill;
+		bool depth_clip_mode_supported = true;
 		MTLDepthClipMode clip_mode = MTLDepthClipModeClip;
 		MTLWinding winding = MTLWindingClockwise;
 		MTLPrimitiveType render_primitive = MTLPrimitiveTypePoint;
@@ -1042,7 +1057,9 @@ public:
 		_FORCE_INLINE_ void apply(id<MTLRenderCommandEncoder> __unsafe_unretained p_enc) const {
 			[p_enc setCullMode:cull_mode];
 			[p_enc setTriangleFillMode:fill_mode];
-			[p_enc setDepthClipMode:clip_mode];
+			if (depth_clip_mode_supported) {
+				[p_enc setDepthClipMode:clip_mode];
+			}
 			[p_enc setFrontFacingWinding:winding];
 			depth_bias.apply(p_enc);
 			stencil.apply(p_enc);
