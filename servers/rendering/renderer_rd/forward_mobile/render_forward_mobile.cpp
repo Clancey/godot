@@ -860,6 +860,14 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 	bool use_msaa = msaa != RS::VIEWPORT_MSAA_DISABLED;
 	bool resolve_depth_buffer = (use_msaa && has_depth_texture_override); // We'll check more conditions later.
 
+	// On some platforms (notably visionOS simulator), XR uses a depth override without depth-resolve support.
+	// Continuing with MSAA in this combination can stall the compositor path; fall back to non-MSAA rendering.
+	if (use_msaa && has_depth_texture_override && !supports_depth_resolve) {
+		msaa = RS::VIEWPORT_MSAA_DISABLED;
+		use_msaa = false;
+		resolve_depth_buffer = false;
+	}
+
 	bool ce_has_post_opaque = _has_compositor_effect(RS::COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_OPAQUE, p_render_data);
 	bool ce_has_pre_transparent = _has_compositor_effect(RS::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT, p_render_data);
 	bool ce_has_post_transparent = _has_compositor_effect(RS::COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_TRANSPARENT, p_render_data);
