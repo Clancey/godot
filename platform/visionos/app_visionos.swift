@@ -122,6 +122,22 @@ struct CompositorServicesImmersiveSpace: Scene {
 		return .automatic
 	}
 
+	fileprivate static var preferredPersistentSystemOverlays: Visibility {
+		if let overlaysOverride = Bundle.main.infoDictionary?["GodotPersistentSystemOverlays"] as? String {
+			switch overlaysOverride.lowercased() {
+				case "hidden":
+					return .hidden
+				case "visible":
+					return .visible
+				case "automatic", "auto":
+					return .automatic
+				default:
+					break
+			}
+		}
+		return .automatic
+	}
+
 	@State var renderer: GDTCompositorServicesRenderer!
 	@State var didSetUpRenderer: Bool = false
 
@@ -144,6 +160,7 @@ struct CompositorServicesImmersiveSpace: Scene {
 			.onWorldRecenter {
 				renderer.worldRecentered()
 			}
+			.persistentSystemOverlays(Self.preferredPersistentSystemOverlays)
 		}
 		.immersionStyle(selection: .constant(Self.initialImmersionStyle), in: .mixed, .full)
 		.upperLimbVisibility(Self.preferredUpperLimbVisibility)
