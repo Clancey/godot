@@ -28,15 +28,18 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#ifdef VISIONOS_ENABLED
-
 #include "register_types.h"
+
+#ifdef VISIONOS_ENABLED
 
 #include "visionos_xr_interface.h"
 
 Ref<VisionOSXRInterface> visionos_xr;
 
+#endif // VISIONOS_ENABLED
+
 void initialize_visionos_xr_module(ModuleInitializationLevel p_level) {
+#ifdef VISIONOS_ENABLED
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
@@ -47,9 +50,13 @@ void initialize_visionos_xr_module(ModuleInitializationLevel p_level) {
 		visionos_xr.instantiate();
 		XRServer::get_singleton()->add_interface(visionos_xr);
 	}
+#else
+	(void)p_level;
+#endif // VISIONOS_ENABLED
 }
 
 void uninitialize_visionos_xr_module(ModuleInitializationLevel p_level) {
+#ifdef VISIONOS_ENABLED
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
@@ -68,6 +75,7 @@ void uninitialize_visionos_xr_module(ModuleInitializationLevel p_level) {
 		// and release
 		visionos_xr.unref();
 	}
-}
-
+#else
+	(void)p_level;
 #endif // VISIONOS_ENABLED
+}

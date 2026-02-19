@@ -203,6 +203,7 @@ public:
 		if (count == 0) {
 			return;
 		}
+		id<MTLCommandBuffer> cmd_buffer = p_cmd_buffer->ensure_command_buffer();
 
 		// Release texture and drawable.
 		frame_buffers[front].unset_texture(0);
@@ -213,9 +214,14 @@ public:
 		front = (front + 1) % frame_buffers.size();
 
 		if (vsync_mode != DisplayServer::VSYNC_DISABLED) {
-			[p_cmd_buffer->get_command_buffer() presentDrawable:drawable afterMinimumDuration:present_minimum_duration];
+#if defined(VISIONOS_ENABLED)
+			[cmd_buffer presentDrawable:drawable];
+#else
+			[cmd_buffer presentDrawable:drawable
+					afterMinimumDuration:present_minimum_duration];
+#endif
 		} else {
-			[p_cmd_buffer->get_command_buffer() presentDrawable:drawable];
+			[cmd_buffer presentDrawable:drawable];
 		}
 	}
 };
@@ -312,13 +318,14 @@ public:
 
 	void present(MDCommandBuffer *p_cmd_buffer) override final {
 		MDFrameBuffer *frame_buffer = &frame_buffers[rear];
+		id<MTLCommandBuffer> cmd_buffer = p_cmd_buffer->ensure_command_buffer();
 
 		if (drawables[rear] != nil) {
-			[p_cmd_buffer->get_command_buffer() presentDrawable:drawables[rear]];
+			[cmd_buffer presentDrawable:drawables[rear]];
 			drawables[rear] = nil;
 		}
 
-		[p_cmd_buffer->get_command_buffer() addScheduledHandler:^(id<MTLCommandBuffer> p_command_buffer) {
+		[cmd_buffer addScheduledHandler:^(id<MTLCommandBuffer> p_command_buffer) {
 			frame_buffer->unset_texture(0);
 			count.fetch_add(-1, std::memory_order_relaxed);
 		}];
@@ -329,14 +336,26 @@ public:
 class SurfaceCompositorServices : public RenderingContextDriverMetal::Surface {
 	// Return a dummy framebuffer so present() is called on it, which relays the call to VisionOSXRInterface
 	MDFrameBuffer dummy_framebuffer;
+	id<MTLTexture> fallback_color_texture = nil;
 
 public:
 	SurfaceCompositorServices(id<MTLDevice> p_device) :
 			Surface(p_device) {
 		dummy_framebuffer.set_texture_count(1);
+
+		MTLTextureDescriptor *desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:get_pixel_format()
+																						width:1
+																					   height:1
+																					mipmapped:NO];
+		desc.storageMode = MTLStorageModePrivate;
+		desc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+		fallback_color_texture = [p_device newTextureWithDescriptor:desc];
+		dummy_framebuffer.set_texture(0, fallback_color_texture);
+		dummy_framebuffer.size = Size2i(1, 1);
 	}
 
 	~SurfaceCompositorServices() override {
+		fallback_color_texture = nil;
 	}
 
 	MTLPixelFormat get_pixel_format() const override final {
@@ -354,7 +373,9 @@ public:
 
 	void present(MDCommandBuffer *p_cmd_buffer) override final {
 		Ref<VisionOSXRInterface> visionos_xr_interface = VisionOSXRInterface::find_interface();
-		ERR_FAIL_COND_MSG(!visionos_xr_interface.is_valid(), "visionOS VR interface not found or invalid");
+		if (!visionos_xr_interface.is_valid() || !visionos_xr_interface->is_initialized()) {
+			return;
+		}
 		visionos_xr_interface->encode_present(p_cmd_buffer);
 	}
 };

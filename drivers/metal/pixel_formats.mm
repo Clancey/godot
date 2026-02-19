@@ -921,6 +921,10 @@ void PixelFormats::modifyMTLFormatCapabilities(const MetalFeatures &p_feat) {
 	setMTLPixFmtCapsIf(iosOnly2, RG11B10Float, RFCMRB);
 	setMTLPixFmtCapsIf(iosOnly2, RGB9E5Float, RFCMRB);
 
+	// Simulator runtimes may reject shader writes to packed 10:10:10:2 unorm textures.
+	disableMTLPixFmtCapsIf(TARGET_OS_SIMULATOR, RGB10A2Unorm, Write);
+	disableMTLPixFmtCapsIf(TARGET_OS_SIMULATOR, BGR10A2Unorm, Write);
+
 	// Blending is actually supported for RGB9E5Float, but format channels cannot
 	// be individually write-enabled during blending on macOS. Disabling blending
 	// on macOS is the least-intrusive way to handle this in a Vulkan-friendly way.

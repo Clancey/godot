@@ -83,6 +83,7 @@ struct API_AVAILABLE(macos(11.0), ios(14.0), tvos(14.0)) MetalFeatures {
 	bool supportsDepth24Stencil8 = false;
 	bool supports32BitFloatFiltering = false;
 	bool supports32BitMSAA = false;
+	bool supportsSamplerBorderColor = false;
 	bool supportsMac = TARGET_OS_OSX;
 	SampleCount supportedSampleCounts = SampleCount1;
 	long hostMemoryPageSize = 0;

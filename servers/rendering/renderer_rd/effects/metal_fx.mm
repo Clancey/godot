@@ -35,9 +35,16 @@
 #import "drivers/metal/rendering_device_driver_metal.h"
 
 #import <Metal/Metal.h>
+#if __has_include(<MetalFX/MetalFX.h>)
 #import <MetalFX/MetalFX.h>
+#define GODOT_METALFX_AVAILABLE 1
+#else
+#define GODOT_METALFX_AVAILABLE 0
+#endif
 
 using namespace RendererRD;
+
+#if GODOT_METALFX_AVAILABLE
 
 #pragma mark - Spatial Scaler
 
@@ -223,3 +230,46 @@ void MFXTemporalEffect::callback(RDD *p_driver, RDD::CommandBufferID p_command_b
 }
 
 #endif
+
+#else
+
+MFXSpatialContext::~MFXSpatialContext() {}
+
+MFXSpatialEffect::MFXSpatialEffect() {}
+MFXSpatialEffect::~MFXSpatialEffect() {}
+
+void MFXSpatialEffect::ensure_context(Ref<RenderSceneBuffersRD> p_render_buffers) {
+	(void)p_render_buffers;
+}
+
+void MFXSpatialEffect::process(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_src, RID p_dst) {
+	(void)p_render_buffers;
+	(void)p_src;
+	(void)p_dst;
+}
+
+MFXSpatialContext *MFXSpatialEffect::create_context(CreateParams p_params) const {
+	(void)p_params;
+	return nullptr;
+}
+
+#ifdef METAL_MFXTEMPORAL_ENABLED
+
+MFXTemporalContext::~MFXTemporalContext() {}
+
+MFXTemporalEffect::MFXTemporalEffect() {}
+MFXTemporalEffect::~MFXTemporalEffect() {}
+
+MFXTemporalContext *MFXTemporalEffect::create_context(CreateParams p_params) const {
+	(void)p_params;
+	return nullptr;
+}
+
+void MFXTemporalEffect::process(RendererRD::MFXTemporalContext *p_ctx, RendererRD::MFXTemporalEffect::Params p_params) {
+	(void)p_ctx;
+	(void)p_params;
+}
+
+#endif // METAL_MFXTEMPORAL_ENABLED
+
+#endif // GODOT_METALFX_AVAILABLE
