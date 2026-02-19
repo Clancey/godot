@@ -32,15 +32,26 @@
 
 #ifdef VISIONOS_ENABLED
 
+#include "core/templates/hash_map.h"
+#include "core/templates/hash_set.h"
 #include "drivers/metal/rendering_context_driver_metal.h"
 #include "drivers/metal/rendering_device_driver_metal.h"
 #include "servers/rendering/renderer_compositor.h"
+#include "servers/rendering/rendering_device.h"
+#include "servers/xr/xr_controller_tracker.h"
+#include "servers/xr/xr_hand_tracker.h"
 #include "servers/xr/xr_interface.h"
 #include "servers/xr/xr_positional_tracker.h"
 #include "servers/xr/xr_vrs.h"
 
 #import <ARKit/ARKit.h>
 #import <CompositorServices/CompositorServices.h>
+
+#if defined(__VISION_OS_VERSION_MAX_ALLOWED) && __VISION_OS_VERSION_MAX_ALLOWED >= 260000 && __has_include(<ARKit/accessory_tracking.h>)
+#define GODOT_VISIONOS_XR_HAS_ACCESSORY_TRACKING 1
+#else
+#define GODOT_VISIONOS_XR_HAS_ACCESSORY_TRACKING 0
+#endif
 
 class VisionOSXRInterface : public XRInterface {
 	GDCLASS(VisionOSXRInterface, XRInterface);
@@ -56,8 +67,68 @@ public:
 	};
 
 private:
+	enum HandIndex {
+		HAND_INDEX_LEFT = 0,
+		HAND_INDEX_RIGHT = 1,
+		HAND_INDEX_MAX = 2,
+	};
+
+	struct HandJointState {
+		bool tracked = false;
+		Transform3D transform;
+		float radius = 0.01f;
+	};
+
+	struct HandInteractionState {
+		bool tracked = false;
+		bool has_joint_data = false;
+		Transform3D default_transform;
+		Transform3D aim_transform;
+		Transform3D grip_transform;
+		Transform3D palm_transform;
+		float pinch_value = 0.0f;
+		bool pinch_click = false;
+		float grasp_value = 0.0f;
+		bool grasp_click = false;
+		HandJointState joints[XRHandTracker::HAND_JOINT_MAX];
+	};
+
+	struct SpatialControllerState {
+		bool tracked = false;
+		int tracking_rank = -1;
+		Transform3D default_transform;
+		Transform3D aim_transform;
+		Transform3D grip_transform;
+		Transform3D skeleton_transform;
+		Vector3 linear_velocity;
+		Vector3 angular_velocity;
+		float trigger_value = 0.0f;
+		bool trigger_click = false;
+		bool trigger_touch = false;
+		float grip_value = 0.0f;
+		bool grip_click = false;
+		Vector2 primary_value;
+		bool primary_click = false;
+		bool primary_touch = false;
+		bool thumbstick_dpad_up = false;
+		bool thumbstick_dpad_down = false;
+		bool thumbstick_dpad_left = false;
+		bool thumbstick_dpad_right = false;
+		bool menu_click = false;
+		bool ax_click = false;
+		bool ax_touch = false;
+		bool by_click = false;
+		bool by_touch = false;
+		bool select_click = false;
+		bool has_extended_inputs = false;
+	};
+
 	bool initialized = false;
 	XRInterface::TrackingStatus tracking_state;
+	XRInterface::PlayAreaMode play_area_mode = XRInterface::XR_PLAY_AREA_ROOMSCALE;
+	float eye_height = 1.7f;
+	float tracking_reference_head_height = 0.0f;
+	bool tracking_reference_head_height_valid = false;
 
 	static RenderingServer *rendering_server;
 	static ar_world_tracking_provider_t world_tracking_provider;
@@ -65,8 +136,16 @@ private:
 	cp_layer_renderer_t layer_renderer = nullptr;
 	cp_layer_renderer_capabilities_t layer_renderer_capabilities = nullptr;
 	ar_session_t ar_session = nullptr;
+	ar_hand_tracking_provider_t hand_tracking_provider = nullptr;
+#if GODOT_VISIONOS_XR_HAS_ACCESSORY_TRACKING
+	ar_accessory_tracking_provider_t accessory_tracking_provider = nullptr;
+	ar_accessory_tracking_configuration_t accessory_tracking_configuration = nullptr;
+	ar_accessories_t accessory_tracking_accessories = nullptr;
+#endif
 
 	ar_device_anchor_t current_device_anchor = nullptr;
+	ar_hand_anchor_t current_left_hand_anchor = nullptr;
+	ar_hand_anchor_t current_right_hand_anchor = nullptr;
 	cp_frame_t current_frame = nullptr;
 
 	// Data and functions only accessible from the rendering thread
@@ -74,17 +153,19 @@ private:
 	private:
 		bool initialized = false;
 		RenderingDevice *rendering_device = nullptr;
-		PixelFormats *pixel_formats = nullptr;
 
 		float minimum_supported_near_plane = 0;
+		float tracking_floor_offset = 0.0f;
 
 		// RenderThread must query the device anchor again,
 		// because ar_device_anchor_t objects cannot be safely shared between threads
 		ar_device_anchor_t current_device_anchor = nullptr;
+		bool has_valid_device_anchor = false;
 		Transform3D origin_from_head;
 
 		cp_frame_t current_frame = nullptr;
 		cp_drawable_t current_drawable = nullptr;
+		uint32_t current_view_count = 2;
 
 		RD::Texture current_color_texture;
 		RID current_color_texture_id;
@@ -98,6 +179,7 @@ private:
 		void uninitialize();
 
 		void set_minimum_supported_near_plane(float p_minimum_supported_near_plane);
+		void set_tracking_floor_offset(float p_tracking_floor_offset);
 		// p_current_frame should be an cp_frame_t pointer casted to uint64_t
 		void set_current_frame(uint64_t p_current_frame);
 
@@ -113,7 +195,7 @@ private:
 
 		void pre_render();
 		Vector<BlitToScreen> post_draw_viewport(RID p_render_target, const Rect2 &p_screen_rect);
-		void encode_present(MDCommandBuffer *p_cmd_buffer);
+		void encode_present(MTL3::MDCommandBuffer *p_cmd_buffer);
 		void end_frame();
 
 		RID get_color_texture();
@@ -124,11 +206,52 @@ private:
 	// Head tracker
 	Ref<XRPositionalTracker> head_tracker;
 
+	Ref<XRControllerTracker> hand_controller_trackers[HAND_INDEX_MAX];
+	Ref<XRHandTracker> hand_trackers[HAND_INDEX_MAX];
+	HandInteractionState hand_interaction_states[HAND_INDEX_MAX];
+	SpatialControllerState spatial_controller_states[HAND_INDEX_MAX];
+	bool hand_tracking_supported = false;
+	bool hand_tracking_active = false;
+	bool accessory_tracking_supported = false;
+	bool accessory_tracking_active = false;
+	bool accessory_tracking_needs_session_refresh = false;
+	HashSet<uint64_t> accessory_tracking_load_requests;
+	HashMap<uint64_t, HandIndex> accessory_tracking_device_hand_assignments;
+	uint64_t accessory_tracking_assigned_device_keys[HAND_INDEX_MAX] = { 0, 0 };
+	SpatialControllerState accessory_tracking_stream_states[HAND_INDEX_MAX];
+	uint64_t accessory_tracking_stream_state_timestamp_msec[HAND_INDEX_MAX] = { 0, 0 };
+
 	static void _bind_methods();
 	static const String name;
 	static StringName get_signal_name(SignalEnum p_signal);
+	float get_tracking_floor_offset() const;
+	Transform3D apply_tracking_floor_offset(const Transform3D &p_transform) const;
+	void reset_tracking_floor_reference();
+	void update_tracking_floor_reference_from_head(const Transform3D &p_head_transform);
+	void sync_tracking_floor_offset_to_render_thread();
 
 	void set_head_pose_from_arkit();
+	void initialize_interaction_trackers(XRServer *p_xr_server);
+	void uninitialize_interaction_trackers(XRServer *p_xr_server);
+	void configure_arkit_session_authorization_and_state_handlers();
+	void run_arkit_session_with_active_providers();
+	void initialize_accessory_tracking_provider();
+	void configure_accessory_tracking_provider_update_handler();
+	void update_accessory_tracking_devices();
+	void update_accessory_tracking_session();
+	void uninitialize_accessory_tracking_provider();
+	void update_hand_states_from_arkit();
+	void update_hand_state_from_anchor(HandIndex p_hand_index, ar_hand_anchor_t p_anchor);
+	void update_spatial_controller_states_from_arkit();
+#if GODOT_VISIONOS_XR_HAS_ACCESSORY_TRACKING
+	void update_spatial_controller_state_from_anchor(HandIndex p_hand_index, ar_accessory_anchor_t p_anchor);
+	void update_spatial_controller_state_from_anchor_to_target(SpatialControllerState p_target_states[HAND_INDEX_MAX], HandIndex p_hand_index, ar_accessory_anchor_t p_anchor);
+#endif
+	void reset_hand_state(HandIndex p_hand_index);
+	void reset_spatial_controller_state(HandIndex p_hand_index);
+	void apply_hand_states_to_trackers();
+	static int map_arkit_joint_to_xr_hand_joint(uint64_t p_joint_index);
+	static Transform3D make_aim_transform_from_hand(const Transform3D &p_fallback, const Transform3D &p_index_knuckle, bool p_has_index_knuckle, const Transform3D &p_index_tip, bool p_has_index_tip);
 
 public:
 	static Ref<VisionOSXRInterface> find_interface() {
@@ -142,6 +265,7 @@ public:
 
 	virtual StringName get_name() const override;
 	virtual uint32_t get_capabilities() const override;
+	virtual PackedStringArray get_suggested_tracker_names() const override;
 
 	virtual TrackingStatus get_tracking_status() const override;
 
@@ -159,6 +283,9 @@ public:
 	virtual bool supports_play_area_mode(XRInterface::PlayAreaMode p_mode) override;
 	virtual XRInterface::PlayAreaMode get_play_area_mode() const override;
 	virtual bool set_play_area_mode(XRInterface::PlayAreaMode p_mode) override;
+
+	void set_eye_height(float p_eye_height);
+	float get_eye_height() const;
 
 	virtual void process() override;
 
@@ -187,7 +314,7 @@ public:
 	virtual Vector<BlitToScreen> post_draw_viewport(RID p_render_target, const Rect2 &p_screen_rect) override {
 		return rt.post_draw_viewport(p_render_target, p_screen_rect);
 	}
-	void encode_present(MDCommandBuffer *p_cmd_buffer) {
+	void encode_present(MTL3::MDCommandBuffer *p_cmd_buffer) {
 		rt.encode_present(p_cmd_buffer);
 	}
 	virtual void end_frame() override {

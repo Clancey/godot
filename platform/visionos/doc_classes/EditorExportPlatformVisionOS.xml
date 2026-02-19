@@ -44,6 +44,12 @@
 		<member name="application/export_project_only" type="bool" setter="" getter="">
 			If [code]true[/code], exports iOS project files without building an XCArchive or [code].ipa[/code] file. If [code]false[/code], exports iOS project files and builds an XCArchive and [code].ipa[/code] file at the same time. When combining Godot with Fastlane or other build pipelines, you may want to set this to [code]true[/code].
 		</member>
+		<member name="application/game_controller_interaction" type="int" setter="" getter="">
+			Configures game controller plist metadata. [code]Disabled[/code] writes no game controller entries. [code]Supported[/code] adds [code]GCSupportsControllerUserInteraction[/code] and [code]GCSupportedGameControllers[/code] with [code]ExtendedGamepad[/code] and [code]SpatialGamepad[/code] profiles. [code]Required[/code] also adds [code]GCRequiresControllerUserInteraction[/code] for [code]visionOS[/code].
+		</member>
+		<member name="application/upper_limb_visibility" type="int" setter="" getter="">
+			Controls preferred system upper-limb visibility for immersive scenes. [code]Auto[/code] keeps the runtime default, except controller-enabled apps hide upper limbs to prevent passthrough overlays over virtual hands/controllers. [code]Visible[/code] forces system upper limbs visible. [code]Hidden[/code] forces system upper limbs hidden.
+		</member>
 		<member name="application/icon_interpolation" type="int" setter="" getter="">
 			Interpolation method used to resize application icon.
 		</member>
@@ -126,6 +132,15 @@
 		</member>
 		<member name="icons/icon_1024x1024_tinted" type="String" setter="" getter="">
 			Base application icon used to generate other icons, tinted version. See [url=https://developer.apple.com/design/human-interface-guidelines/foundations/app-icons]App icons[/url].
+		</member>
+		<member name="privacy/accessory_tracking_usage_description" type="String" setter="" getter="">
+			A message displayed when requesting permission to track spatial accessories, such as paired spatial game controllers.
+		</member>
+		<member name="privacy/hands_tracking_usage_description" type="String" setter="" getter="">
+			A message displayed when requesting permission to access hand-tracking data.
+		</member>
+		<member name="privacy/world_sensing_usage_description" type="String" setter="" getter="">
+			A message displayed when requesting permission to access world-sensing data, such as plane detection, image tracking, or scene reconstruction.
 		</member>
 		<member name="privacy/active_keyboard_access_reasons" type="int" setter="" getter="">
 			The reasons your app use active keyboard API. See [url=https://developer.apple.com/documentation/bundleresources/privacy_manifest_files/describing_use_of_required_reason_api]Describing use of required reason API[/url].

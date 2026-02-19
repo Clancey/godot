@@ -59,15 +59,21 @@ struct ContentStageConfiguration: CompositorLayerConfiguration {
 		configuration.depthFormat = .depth32Float
 		configuration.colorFormat = .rgba16Float
 
-		let foveationEnabled = capabilities.supportsFoveation
-		configuration.isFoveationEnabled = foveationEnabled
+		let supportedLayouts = capabilities.supportedLayouts(options: [])
+		let supportedFoveatedLayouts = capabilities.supportsFoveation ? capabilities.supportedLayouts(options: [.foveationEnabled]) : []
+		let layeredWithFoveation = supportedFoveatedLayouts.contains(.layered)
+		let layeredWithoutFoveation = supportedLayouts.contains(.layered)
 
-		let options: LayerRenderer.Capabilities.SupportedLayoutsOptions = foveationEnabled ? [.foveationEnabled] : []
-		let supportedLayouts = capabilities.supportedLayouts(options: options)
-		if (!supportedLayouts.contains(.layered)) {
-			fatalError("Only the .layered layout is supported by Godot's visionOS XR module.")
+		if layeredWithFoveation {
+			configuration.isFoveationEnabled = true
+			configuration.layout = .layered
+		} else if layeredWithoutFoveation {
+			configuration.isFoveationEnabled = false
+			configuration.layout = .layered
+		} else {
+			configuration.isFoveationEnabled = false
+			configuration.layout = .layered
 		}
-		configuration.layout = .layered
 	}
 }
 
@@ -77,33 +83,60 @@ struct CompositorServicesImmersiveSpace: Scene {
 
 	fileprivate static var initialImmersionStyle: ImmersionStyle {
 		guard let sceneManifest = Bundle.main.infoDictionary?["UIApplicationSceneManifest"] as? [String: Any],
-			  let sceneConfigurations = sceneManifest["UISceneConfigurations"] as? [String: Any],
-			  let cpSceneConfiguration = sceneConfigurations["UISceneSessionRoleImmersiveSpaceApplication"] as? [[String: Any]],
+			  let sceneConfigurations = sceneManifest["UISceneConfigurations"] as? [String: Any] else {
+			return .mixed
+		}
+		let cpSceneConfiguration =
+			(sceneConfigurations["CPSceneSessionRoleImmersiveSpaceApplication"] as? [[String: Any]])
+			?? (sceneConfigurations["UISceneSessionRoleImmersiveSpaceApplication"] as? [[String: Any]])
+		guard let cpSceneConfiguration,
 			  let immersionStyleString = cpSceneConfiguration.first?["UISceneInitialImmersionStyle"] as? String  else {
-			return .full
+			return .mixed
 		}
 		switch immersionStyleString {
 			case "UIImmersionStyleFull": return .full
 			case "UIImmersionStyleMixed": return .mixed
-			default: return .full
+			default: return .mixed
 		}
 	}
 
+	fileprivate static var preferredUpperLimbVisibility: Visibility {
+		if let visibilityOverride = Bundle.main.infoDictionary?["GodotUpperLimbVisibility"] as? String {
+			switch visibilityOverride.lowercased() {
+				case "hidden":
+					return .hidden
+				case "visible":
+					return .visible
+				case "automatic", "auto":
+					return .automatic
+				default:
+					break
+			}
+		}
+
+		// If controller interaction is enabled, hide system-rendered upper limbs by default
+		// so apps can render fully virtual controller/hands without passthrough overlays.
+		if let supportsControllerInteraction = Bundle.main.infoDictionary?["GCSupportsControllerUserInteraction"] as? Bool, supportsControllerInteraction {
+			return .hidden
+		}
+		return .automatic
+	}
+
 	@State var renderer: GDTCompositorServicesRenderer!
-    @State var didSetUpRenderer: Bool = false
+	@State var didSetUpRenderer: Bool = false
 
 	var body: some Scene {
 		ImmersiveSpace(id: "ImmersiveSpace") {
 			CompositorLayer(configuration: ContentStageConfiguration()) { @MainActor layerRenderer in
 				GDTAppDelegateServiceVisionOS.layerRenderer = layerRenderer
 				renderer = GDTCompositorServicesRenderer(layerRenderer: layerRenderer,
-                                                         capabilities: GDTAppDelegateServiceVisionOS.layerRendererCapabilities)
-                if !didSetUpRenderer {
-                    renderer.setUp()
-                    didSetUpRenderer = true
-                } else {
-                    renderer.updateXRInterface()
-                }
+													 capabilities: GDTAppDelegateServiceVisionOS.layerRendererCapabilities)
+				if !didSetUpRenderer {
+					renderer.setUp()
+					didSetUpRenderer = true
+				} else {
+					renderer.updateXRInterface()
+				}
 				Task(executorPreference: RendererTaskExecutor.shared) {
 					await renderer.startRenderLoop()
 				}
@@ -113,6 +146,7 @@ struct CompositorServicesImmersiveSpace: Scene {
 			}
 		}
 		.immersionStyle(selection: .constant(Self.initialImmersionStyle), in: .mixed, .full)
+		.upperLimbVisibility(Self.preferredUpperLimbVisibility)
 	}
 }
 
