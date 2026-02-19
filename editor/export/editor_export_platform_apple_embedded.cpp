@@ -846,27 +846,37 @@ struct CodesignData {
 };
 
 Error EditorExportPlatformAppleEmbedded::_codesign(String p_file, void *p_userdata) {
-	if (p_file.ends_with(".dylib")) {
-		CodesignData *data = static_cast<CodesignData *>(p_userdata);
-		print_line(String("Signing ") + p_file);
+	CodesignData *data = static_cast<CodesignData *>(p_userdata);
+	String sign_id;
+	if (data->debug) {
+		sign_id = data->preset->get("application/code_sign_identity_debug").operator String().is_empty() ? "Apple Development" : data->preset->get("application/code_sign_identity_debug");
+	} else {
+		sign_id = data->preset->get("application/code_sign_identity_release").operator String().is_empty() ? "Apple Distribution" : data->preset->get("application/code_sign_identity_release");
+	}
 
-		String sign_id;
-		if (data->debug) {
-			sign_id = data->preset->get("application/code_sign_identity_debug").operator String().is_empty() ? "Apple Development" : data->preset->get("application/code_sign_identity_debug");
-		} else {
-			sign_id = data->preset->get("application/code_sign_identity_release").operator String().is_empty() ? "Apple Distribution" : data->preset->get("application/code_sign_identity_release");
-		}
+	auto sign_target = [&](const String &p_target) -> Error {
+		print_line(String("Signing ") + p_target);
 
 		List<String> codesign_args;
 		codesign_args.push_back("-f");
 		codesign_args.push_back("-s");
 		codesign_args.push_back(sign_id);
-		codesign_args.push_back(p_file);
-		String str;
-		Error err = OS::get_singleton()->execute("codesign", codesign_args, &str, nullptr, true);
-		print_verbose("codesign (" + p_file + "):\n" + str);
+		codesign_args.push_back(p_target);
 
-		return err;
+		int exit_code = 0;
+		String str;
+		Error err = OS::get_singleton()->execute("codesign", codesign_args, &str, &exit_code, true);
+		print_verbose("codesign (" + p_target + "):\n" + str);
+		ERR_FAIL_COND_V_MSG(err != OK || exit_code != 0, ERR_CANT_CREATE, vformat("Failed to code-sign \"%s\".", p_target));
+		return OK;
+	};
+
+	if (p_file.ends_with(".framework/Info.plist")) {
+		return sign_target(p_file.get_base_dir());
+	}
+
+	if (p_file.ends_with(".dylib")) {
+		return sign_target(p_file);
 	}
 	return OK;
 }
@@ -1099,6 +1109,24 @@ Error EditorExportPlatformAppleEmbedded::_convert_to_framework(const String &p_s
 				f->store_string(info_plist);
 			}
 		}
+
+#ifdef MACOS_ENABLED
+		// Re-sign converted frameworks ad-hoc so the embedded signature
+		// identifier is regenerated from the new framework Info.plist.
+		{
+			List<String> codesign_args;
+			codesign_args.push_back("-f");
+			codesign_args.push_back("-s");
+			codesign_args.push_back("-");
+			codesign_args.push_back(p_destination);
+
+			int exit_code = 0;
+			String str;
+			Error err = OS::get_singleton()->execute("codesign", codesign_args, &str, &exit_code, true);
+			print_verbose("codesign (" + p_destination + "):\n" + str);
+			ERR_FAIL_COND_V_MSG(err != OK || exit_code != 0, ERR_CANT_CREATE, vformat("Failed to ad-hoc sign converted framework \"%s\".", p_destination));
+		}
+#endif
 	}
 
 	return OK;
