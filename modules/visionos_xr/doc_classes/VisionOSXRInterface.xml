@@ -13,11 +13,13 @@
 		[code]default[/code], [code]aim[/code], [code]grip[/code], and [code]skeleton[/code].
 
 		For hand controller trackers, the following inputs are exposed:
-		[code]trigger[/code], [code]trigger_click[/code], [code]grip[/code], [code]grip_click[/code], [code]primary[/code], [code]primary_click[/code], and [code]select_button[/code].
+		[code]trigger[/code], [code]trigger_click[/code], [code]grip[/code], [code]grip_click[/code], [code]primary[/code], [code]primary_click[/code], [code]secondary[/code], [code]secondary_click[/code], [code]secondary_touch[/code], and [code]select_button[/code].
 
-		When tracked spatial controllers are available (for example paired PlayStation VR2 Sense controllers on visionOS 26+), [code]left_hand[/code]/[code]right_hand[/code] controller poses and inputs come from accessory tracking. When no tracked spatial controller is active for a hand, pinch-based hand interaction is used as fallback for compatibility.
+		When tracked spatial accessories are available (for example paired PlayStation VR2 Sense controllers or supported spatial styli on visionOS 26+), [code]left_hand[/code]/[code]right_hand[/code] controller poses and inputs come from accessory tracking. Spatial stylus tip pressure is mapped to [code]trigger[/code], with stylus primary/secondary side buttons mapped to [code]primary_click[/code]/[code]secondary_click[/code] (and [code]ax_button[/code]/[code]by_button[/code] aliases). When no tracked spatial controller is active for a hand, pinch-based hand interaction is used as fallback for compatibility.
 
 		Hand input maps pinch to trigger/primary/grip interactions for compatibility. Haptics are not implemented yet.
+
+		Raw eye-gaze vectors are not exposed by this interface. visionOS provides gaze-driven targeting through system interaction behavior.
 
 		To use this module, you must set 'application/app_role' export setting to 'Immersive'. You can choose the immersion style using the 'application/immersion_style' export setting.
 

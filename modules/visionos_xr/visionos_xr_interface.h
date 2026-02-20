@@ -109,6 +109,9 @@ private:
 		Vector2 primary_value;
 		bool primary_click = false;
 		bool primary_touch = false;
+		Vector2 secondary_value;
+		bool secondary_click = false;
+		bool secondary_touch = false;
 		bool thumbstick_dpad_up = false;
 		bool thumbstick_dpad_down = false;
 		bool thumbstick_dpad_left = false;
@@ -140,6 +143,7 @@ private:
 	ar_accessory_tracking_provider_t accessory_tracking_provider = nullptr;
 	ar_accessory_tracking_configuration_t accessory_tracking_configuration = nullptr;
 	ar_accessories_t accessory_tracking_accessories = nullptr;
+	ar_accessory_anchor_t accessory_tracking_predicted_anchor = nullptr;
 #endif
 
 	ar_device_anchor_t current_device_anchor = nullptr;
@@ -154,12 +158,11 @@ private:
 		RenderingDevice *rendering_device = nullptr;
 
 		float minimum_supported_near_plane = 0;
-		float tracking_floor_offset = 0.0f;
 
-		// RenderThread must query the device anchor again,
-		// because ar_device_anchor_t objects cannot be safely shared between threads
 		ar_device_anchor_t current_device_anchor = nullptr;
 		bool has_valid_device_anchor = false;
+
+		bool has_valid_origin_from_head = false;
 		Transform3D origin_from_head;
 
 		cp_frame_t current_frame = nullptr;
@@ -178,7 +181,7 @@ private:
 		void uninitialize();
 
 		void set_minimum_supported_near_plane(float p_minimum_supported_near_plane);
-		void set_tracking_floor_offset(float p_tracking_floor_offset);
+		void set_origin_from_head(const Transform3D &p_origin_from_head, bool p_has_valid_origin_from_head);
 		// p_current_frame should be an cp_frame_t pointer casted to uint64_t
 		void set_current_frame(uint64_t p_current_frame);
 
@@ -227,7 +230,6 @@ private:
 	Transform3D apply_tracking_floor_offset(const Transform3D &p_transform) const;
 	void reset_tracking_floor_reference();
 	void update_tracking_floor_reference_from_head(const Transform3D &p_head_transform);
-	void sync_tracking_floor_offset_to_render_thread();
 
 	void set_head_pose_from_arkit();
 	void initialize_interaction_trackers(XRServer *p_xr_server);
@@ -239,9 +241,9 @@ private:
 	void update_accessory_tracking_devices();
 	void update_accessory_tracking_session();
 	void uninitialize_accessory_tracking_provider();
-	void update_hand_states_from_arkit();
+	void update_hand_states_from_arkit(CFTimeInterval p_prediction_timestamp);
 	void update_hand_state_from_anchor(HandIndex p_hand_index, ar_hand_anchor_t p_anchor);
-	void update_spatial_controller_states_from_arkit();
+	void update_spatial_controller_states_from_arkit(CFTimeInterval p_prediction_timestamp);
 #if GODOT_VISIONOS_XR_HAS_ACCESSORY_TRACKING
 	void update_spatial_controller_state_from_anchor(HandIndex p_hand_index, ar_accessory_anchor_t p_anchor);
 	void update_spatial_controller_state_from_anchor_to_target(SpatialControllerState p_target_states[HAND_INDEX_MAX], HandIndex p_hand_index, ar_accessory_anchor_t p_anchor);

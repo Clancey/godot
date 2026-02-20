@@ -293,6 +293,62 @@ static bool _read_directional_input(GCPhysicalInputProfile *p_profile, NSString 
 	return true;
 }
 
+static id<GCButtonElement> _get_device_button_element(id<GCDevicePhysicalInputState> p_input_state, GCInputButtonName p_name) {
+	if (p_input_state == nil || p_name == nil) {
+		return nil;
+	}
+	id<GCButtonElement> button = p_input_state.buttons[p_name];
+	if (button != nil) {
+		return button;
+	}
+	id<GCPhysicalInputElement> element = [p_input_state objectForKeyedSubscript:p_name];
+	if ([element conformsToProtocol:@protocol(GCButtonElement)]) {
+		return (id<GCButtonElement>)element;
+	}
+	return nil;
+}
+
+static bool _read_device_button_state(id<GCDevicePhysicalInputState> p_input_state, GCInputButtonName p_name, float &r_value, bool &r_pressed, bool *r_touched = nullptr, float *r_force = nullptr) {
+	id<GCButtonElement> button = _get_device_button_element(p_input_state, p_name);
+	if (button == nil) {
+		return false;
+	}
+
+	id<GCPressedStateInput, GCLinearInput> pressed_input = button.pressedInput;
+	if (pressed_input == nil) {
+		return false;
+	}
+
+	r_value = pressed_input.value;
+	r_pressed = pressed_input.pressed;
+
+	if (r_touched != nullptr) {
+		if (button.touchedInput != nil) {
+			*r_touched = button.touchedInput.touched;
+		} else {
+			*r_touched = r_pressed;
+		}
+	}
+
+	if (r_force != nullptr) {
+		*r_force = button.forceInput != nil ? button.forceInput.value : 0.0f;
+	}
+
+	return true;
+}
+
+static bool _read_device_button_state_any(id<GCDevicePhysicalInputState> p_input_state, std::initializer_list<GCInputButtonName> p_names, float &r_value, bool &r_pressed, bool *r_touched = nullptr, float *r_force = nullptr) {
+	for (const GCInputButtonName &name : p_names) {
+		if (name == nil) {
+			continue;
+		}
+		if (_read_device_button_state(p_input_state, name, r_value, r_pressed, r_touched, r_force)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static int _accessory_tracking_rank(ar_accessory_anchor_tracking_state_t p_tracking_state) {
 	switch (p_tracking_state) {
 		case ar_accessory_anchor_tracking_state_position_orientation_tracked:
@@ -409,13 +465,6 @@ void VisionOSXRInterface::update_tracking_floor_reference_from_head(const Transf
 
 	tracking_reference_head_height = p_head_transform.origin.y;
 	tracking_reference_head_height_valid = true;
-	sync_tracking_floor_offset_to_render_thread();
-}
-
-void VisionOSXRInterface::sync_tracking_floor_offset_to_render_thread() {
-	if (rendering_server != nullptr) {
-		rendering_server->call_on_render_thread(callable_mp(&rt, &RenderThread::set_tracking_floor_offset).bind(get_tracking_floor_offset()));
-	}
 }
 
 void VisionOSXRInterface::initialize_interaction_trackers(XRServer *p_xr_server) {
@@ -813,6 +862,7 @@ void VisionOSXRInterface::initialize_accessory_tracking_provider() {
 	accessory_tracking_provider = nullptr;
 	accessory_tracking_configuration = nullptr;
 	accessory_tracking_accessories = nullptr;
+	accessory_tracking_predicted_anchor = nullptr;
 
 	if (!_is_runtime_accessory_tracking_available()) {
 		return;
@@ -838,6 +888,7 @@ void VisionOSXRInterface::initialize_accessory_tracking_provider() {
 		accessory_tracking_accessories = nullptr;
 		return;
 	}
+	accessory_tracking_predicted_anchor = ar_accessory_anchor_create();
 
 	configure_accessory_tracking_provider_update_handler();
 
@@ -1009,6 +1060,7 @@ void VisionOSXRInterface::uninitialize_accessory_tracking_provider() {
 	accessory_tracking_provider = nullptr;
 	accessory_tracking_configuration = nullptr;
 	accessory_tracking_accessories = nullptr;
+	accessory_tracking_predicted_anchor = nullptr;
 #endif
 }
 
@@ -1122,7 +1174,7 @@ void VisionOSXRInterface::update_hand_state_from_anchor(HandIndex p_hand_index, 
 	state.grasp_click = state.pinch_click;
 }
 
-void VisionOSXRInterface::update_hand_states_from_arkit() {
+void VisionOSXRInterface::update_hand_states_from_arkit(CFTimeInterval p_prediction_timestamp) {
 	if (!hand_tracking_active || hand_tracking_provider == nullptr || current_left_hand_anchor == nullptr || current_right_hand_anchor == nullptr) {
 		reset_hand_state(HAND_INDEX_LEFT);
 		reset_hand_state(HAND_INDEX_RIGHT);
@@ -1134,7 +1186,13 @@ void VisionOSXRInterface::update_hand_states_from_arkit() {
 		return;
 	}
 
-	const bool got_hand_anchors = ar_hand_tracking_provider_get_latest_anchors(hand_tracking_provider, current_left_hand_anchor, current_right_hand_anchor);
+	bool got_hand_anchors = false;
+	if (@available(visionOS 2.0, *)) {
+		got_hand_anchors = ar_hand_tracking_provider_query_anchors_at_timestamp(hand_tracking_provider, p_prediction_timestamp, current_left_hand_anchor, current_right_hand_anchor) == ar_hand_anchor_query_status_success;
+	}
+	if (!got_hand_anchors) {
+		got_hand_anchors = ar_hand_tracking_provider_get_latest_anchors(hand_tracking_provider, current_left_hand_anchor, current_right_hand_anchor);
+	}
 	if (!got_hand_anchors) {
 		reset_hand_state(HAND_INDEX_LEFT);
 		reset_hand_state(HAND_INDEX_RIGHT);
@@ -1145,7 +1203,7 @@ void VisionOSXRInterface::update_hand_states_from_arkit() {
 	update_hand_state_from_anchor(HAND_INDEX_RIGHT, current_right_hand_anchor);
 }
 
-void VisionOSXRInterface::update_spatial_controller_states_from_arkit() {
+void VisionOSXRInterface::update_spatial_controller_states_from_arkit(CFTimeInterval p_prediction_timestamp) {
 	reset_spatial_controller_state(HAND_INDEX_LEFT);
 	reset_spatial_controller_state(HAND_INDEX_RIGHT);
 
@@ -1162,6 +1220,7 @@ void VisionOSXRInterface::update_spatial_controller_states_from_arkit() {
 	if (latest_anchors == nullptr) {
 		return;
 	}
+	ar_accessory_anchor_t predicted_anchor = accessory_tracking_predicted_anchor;
 	ar_accessory_anchors_enumerate_anchors(latest_anchors, ^bool(ar_accessory_anchor_t accessory_anchor) {
 		if (accessory_anchor == nullptr) {
 			return true;
@@ -1170,14 +1229,22 @@ void VisionOSXRInterface::update_spatial_controller_states_from_arkit() {
 			return true;
 		}
 
-		const ar_accessory_chirality_t chirality = _resolve_accessory_anchor_chirality(accessory_anchor);
+		ar_accessory_anchor_t sampled_anchor = accessory_anchor;
+		if (predicted_anchor != nullptr) {
+			const bool has_predicted_anchor = ar_accessory_tracking_provider_predict_anchor_at_timestamp(accessory_tracking_provider, accessory_anchor, p_prediction_timestamp, predicted_anchor);
+			if (has_predicted_anchor && ar_accessory_anchor_is_tracked(predicted_anchor)) {
+				sampled_anchor = predicted_anchor;
+			}
+		}
+
+		const ar_accessory_chirality_t chirality = _resolve_accessory_anchor_chirality(sampled_anchor);
 
 		switch (chirality) {
 			case ar_accessory_chirality_left:
-				update_spatial_controller_state_from_anchor(HAND_INDEX_LEFT, accessory_anchor);
+				update_spatial_controller_state_from_anchor(HAND_INDEX_LEFT, sampled_anchor);
 				break;
 			case ar_accessory_chirality_right:
-				update_spatial_controller_state_from_anchor(HAND_INDEX_RIGHT, accessory_anchor);
+				update_spatial_controller_state_from_anchor(HAND_INDEX_RIGHT, sampled_anchor);
 				break;
 			case ar_accessory_chirality_unspecified:
 			default:
@@ -1276,90 +1343,135 @@ void VisionOSXRInterface::update_spatial_controller_state_from_anchor_to_target(
 		return;
 	}
 
-	// Non-controller accessories (e.g. stylus) still contribute pose/tracking state.
-	// Controller-specific button mappings below apply only to game controllers.
-	if (!_is_spatial_controller_device(source_device)) {
-		return;
-	}
-
-	GCPhysicalInputProfile *physical_input_profile = nil;
-	if ([source_device respondsToSelector:@selector(physicalInputProfile)]) {
+	const bool is_left = p_hand_index == HAND_INDEX_LEFT;
+	if (_is_spatial_controller_device(source_device)) {
+		GCPhysicalInputProfile *physical_input_profile = nil;
+		if ([source_device respondsToSelector:@selector(physicalInputProfile)]) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-		physical_input_profile = source_device.physicalInputProfile;
+			physical_input_profile = source_device.physicalInputProfile;
 #pragma clang diagnostic pop
-	}
-	if (physical_input_profile == nil && [source_device isKindOfClass:[GCController class]]) {
-		physical_input_profile = ((GCController *)source_device).physicalInputProfile;
-	}
-	if (physical_input_profile == nil) {
+		}
+		if (physical_input_profile == nil && [source_device isKindOfClass:[GCController class]]) {
+			physical_input_profile = ((GCController *)source_device).physicalInputProfile;
+		}
+		if (physical_input_profile == nil) {
+			return;
+		}
+
+		NSString *trigger_fallback_name = is_left ? GCInputLeftTrigger : GCInputRightTrigger;
+		NSString *grip_fallback_name = is_left ? GCInputLeftShoulder : GCInputRightShoulder;
+		NSString *bumper_fallback_name = is_left ? GCInputLeftBumper : GCInputRightBumper;
+		NSString *thumbstick_axis_fallback_name = is_left ? GCInputLeftThumbstick : GCInputRightThumbstick;
+		NSString *thumbstick_button_fallback_name = is_left ? GCInputLeftThumbstickButton : GCInputRightThumbstickButton;
+		NSString *ax_primary_name = is_left ? GCInputButtonX : GCInputButtonA;
+		NSString *ax_fallback_name = is_left ? GCInputButtonA : GCInputButtonX;
+		NSString *by_primary_name = is_left ? GCInputButtonY : GCInputButtonB;
+		NSString *by_fallback_name = is_left ? GCInputButtonB : GCInputButtonY;
+
+		float button_value = 0.0f;
+		bool button_pressed = false;
+		bool button_touched = false;
+
+		const bool has_trigger = _read_button_state_any(physical_input_profile, { GCInputTrigger, trigger_fallback_name }, button_value, button_pressed, &button_touched);
+		if (has_trigger) {
+			state.trigger_value = button_value;
+			state.trigger_click = button_pressed || button_value >= 0.5f;
+			state.trigger_touch = button_touched || state.trigger_click || button_value > 0.01f;
+		}
+
+		const bool has_grip = _read_button_state_any(physical_input_profile, { GCInputGripButton, grip_fallback_name, bumper_fallback_name }, button_value, button_pressed, &button_touched);
+		if (has_grip) {
+			state.grip_value = button_value;
+			state.grip_click = button_pressed || button_value >= 0.5f;
+		}
+
+		const bool has_primary_axis = _read_directional_input(physical_input_profile, GCInputThumbstick, state.primary_value) ||
+				_read_directional_input(physical_input_profile, thumbstick_axis_fallback_name, state.primary_value);
+		if (!has_primary_axis) {
+			_read_directional_input(physical_input_profile, GCInputDirectionPad, state.primary_value);
+		}
+		state.thumbstick_dpad_up = state.primary_value.y >= VISIONOS_DPAD_THRESHOLD;
+		state.thumbstick_dpad_down = state.primary_value.y <= -VISIONOS_DPAD_THRESHOLD;
+		state.thumbstick_dpad_left = state.primary_value.x <= -VISIONOS_DPAD_THRESHOLD;
+		state.thumbstick_dpad_right = state.primary_value.x >= VISIONOS_DPAD_THRESHOLD;
+
+		const bool has_primary_click = _read_button_state_any(physical_input_profile, { GCInputThumbstickButton, thumbstick_button_fallback_name }, button_value, button_pressed, &button_touched);
+		if (has_primary_click) {
+			state.primary_click = button_pressed || button_value >= 0.5f;
+			state.primary_touch = button_touched || state.primary_click || button_value > 0.01f;
+		} else {
+			state.primary_touch = state.primary_value.length() > 0.01f;
+		}
+
+		const bool has_ax = _read_button_state_any(physical_input_profile, { ax_primary_name, ax_fallback_name }, button_value, button_pressed, &button_touched);
+		if (has_ax) {
+			state.ax_click = button_pressed || button_value >= 0.5f;
+			state.ax_touch = button_touched || state.ax_click || button_value > 0.01f;
+		}
+
+		const bool has_by = _read_button_state_any(physical_input_profile, { by_primary_name, by_fallback_name }, button_value, button_pressed, &button_touched);
+		if (has_by) {
+			state.by_click = button_pressed || button_value >= 0.5f;
+			state.by_touch = button_touched || state.by_click || button_value > 0.01f;
+		}
+
+		if (_read_button_state_any(physical_input_profile, { GCInputButtonMenu, GCInputButtonOptions, GCInputButtonHome, GCInputButtonShare }, button_value, button_pressed)) {
+			state.menu_click = button_pressed || button_value >= 0.5f;
+		}
+
+		state.has_extended_inputs = has_trigger || has_grip || has_primary_axis || has_primary_click || has_ax || has_by;
+		state.select_click = state.has_extended_inputs ? false : (state.trigger_click || state.primary_click);
 		return;
 	}
 
-	const bool is_left = p_hand_index == HAND_INDEX_LEFT;
-	NSString *trigger_fallback_name = is_left ? GCInputLeftTrigger : GCInputRightTrigger;
-	NSString *grip_fallback_name = is_left ? GCInputLeftShoulder : GCInputRightShoulder;
-	NSString *bumper_fallback_name = is_left ? GCInputLeftBumper : GCInputRightBumper;
-	NSString *thumbstick_axis_fallback_name = is_left ? GCInputLeftThumbstick : GCInputRightThumbstick;
-	NSString *thumbstick_button_fallback_name = is_left ? GCInputLeftThumbstickButton : GCInputRightThumbstickButton;
-	NSString *ax_primary_name = is_left ? GCInputButtonX : GCInputButtonA;
-	NSString *ax_fallback_name = is_left ? GCInputButtonA : GCInputButtonX;
-	NSString *by_primary_name = is_left ? GCInputButtonY : GCInputButtonB;
-	NSString *by_fallback_name = is_left ? GCInputButtonB : GCInputButtonY;
+	if (_is_spatial_stylus_device(source_device)) {
+		id<GCDevicePhysicalInputState> stylus_input_state = nil;
+		if (@available(visionOS 26.0, *)) {
+			if ([source_device isKindOfClass:[GCStylus class]]) {
+				stylus_input_state = ((GCStylus *)source_device).input;
+			}
+		}
+		if (stylus_input_state == nil) {
+			return;
+		}
 
-	float button_value = 0.0f;
-	bool button_pressed = false;
-	bool button_touched = false;
+		float button_value = 0.0f;
+		float button_force = 0.0f;
+		bool button_pressed = false;
+		bool button_touched = false;
 
-	const bool has_trigger = _read_button_state_any(physical_input_profile, { GCInputTrigger, trigger_fallback_name }, button_value, button_pressed, &button_touched);
-	if (has_trigger) {
-		state.trigger_value = button_value;
-		state.trigger_click = button_pressed || button_value >= 0.5f;
-		state.trigger_touch = button_touched || state.trigger_click || button_value > 0.01f;
+		const bool has_tip = _read_device_button_state_any(stylus_input_state, { GCInputStylusTip }, button_value, button_pressed, &button_touched, &button_force);
+		if (has_tip) {
+			const float tip_value = MAX(button_value, button_force);
+			state.trigger_value = tip_value;
+			state.trigger_click = button_pressed || tip_value >= 0.5f;
+			state.trigger_touch = button_touched || state.trigger_click || tip_value > 0.01f;
+		}
+
+		const bool has_primary_button = _read_device_button_state_any(stylus_input_state, { GCInputStylusPrimaryButton }, button_value, button_pressed, &button_touched, &button_force);
+		if (has_primary_button) {
+			const float primary_value = MAX(button_value, button_force);
+			state.primary_click = button_pressed || primary_value >= 0.5f;
+			state.primary_touch = button_touched || state.primary_click || primary_value > 0.01f;
+			state.ax_click = state.primary_click;
+			state.ax_touch = state.primary_touch;
+			state.grip_value = primary_value;
+			state.grip_click = state.primary_click;
+		}
+
+		const bool has_secondary_button = _read_device_button_state_any(stylus_input_state, { GCInputStylusSecondaryButton }, button_value, button_pressed, &button_touched, &button_force);
+		if (has_secondary_button) {
+			const float secondary_value = MAX(button_value, button_force);
+			state.secondary_click = button_pressed || secondary_value >= 0.5f;
+			state.secondary_touch = button_touched || state.secondary_click || secondary_value > 0.01f;
+			state.by_click = state.secondary_click;
+			state.by_touch = state.secondary_touch;
+		}
+
+		state.has_extended_inputs = has_tip || has_primary_button || has_secondary_button;
+		state.select_click = state.trigger_click || state.primary_click || state.secondary_click;
 	}
-
-	const bool has_grip = _read_button_state_any(physical_input_profile, { GCInputGripButton, grip_fallback_name, bumper_fallback_name }, button_value, button_pressed, &button_touched);
-	if (has_grip) {
-		state.grip_value = button_value;
-		state.grip_click = button_pressed || button_value >= 0.5f;
-	}
-
-	const bool has_primary_axis = _read_directional_input(physical_input_profile, GCInputThumbstick, state.primary_value) ||
-			_read_directional_input(physical_input_profile, thumbstick_axis_fallback_name, state.primary_value);
-	if (!has_primary_axis) {
-		_read_directional_input(physical_input_profile, GCInputDirectionPad, state.primary_value);
-	}
-	state.thumbstick_dpad_up = state.primary_value.y >= VISIONOS_DPAD_THRESHOLD;
-	state.thumbstick_dpad_down = state.primary_value.y <= -VISIONOS_DPAD_THRESHOLD;
-	state.thumbstick_dpad_left = state.primary_value.x <= -VISIONOS_DPAD_THRESHOLD;
-	state.thumbstick_dpad_right = state.primary_value.x >= VISIONOS_DPAD_THRESHOLD;
-
-	const bool has_primary_click = _read_button_state_any(physical_input_profile, { GCInputThumbstickButton, thumbstick_button_fallback_name }, button_value, button_pressed, &button_touched);
-	if (has_primary_click) {
-		state.primary_click = button_pressed || button_value >= 0.5f;
-		state.primary_touch = button_touched || state.primary_click || button_value > 0.01f;
-	} else {
-		state.primary_touch = state.primary_value.length() > 0.01f;
-	}
-
-	const bool has_ax = _read_button_state_any(physical_input_profile, { ax_primary_name, ax_fallback_name }, button_value, button_pressed, &button_touched);
-	if (has_ax) {
-		state.ax_click = button_pressed || button_value >= 0.5f;
-		state.ax_touch = button_touched || state.ax_click || button_value > 0.01f;
-	}
-
-	const bool has_by = _read_button_state_any(physical_input_profile, { by_primary_name, by_fallback_name }, button_value, button_pressed, &button_touched);
-	if (has_by) {
-		state.by_click = button_pressed || button_value >= 0.5f;
-		state.by_touch = button_touched || state.by_click || button_value > 0.01f;
-	}
-
-	if (_read_button_state_any(physical_input_profile, { GCInputButtonMenu, GCInputButtonOptions, GCInputButtonHome, GCInputButtonShare }, button_value, button_pressed)) {
-		state.menu_click = button_pressed || button_value >= 0.5f;
-	}
-
-	state.has_extended_inputs = has_trigger || has_grip || has_primary_axis || has_primary_click || has_ax || has_by;
-	state.select_click = state.has_extended_inputs ? false : (state.trigger_click || state.primary_click);
 }
 #endif
 
@@ -1418,9 +1530,9 @@ void VisionOSXRInterface::apply_hand_states_to_trackers() {
 				controller_tracker->set_input(SNAME("primary_dpad_down"), controller_state.thumbstick_dpad_down);
 				controller_tracker->set_input(SNAME("primary_dpad_left"), controller_state.thumbstick_dpad_left);
 				controller_tracker->set_input(SNAME("primary_dpad_right"), controller_state.thumbstick_dpad_right);
-				controller_tracker->set_input(SNAME("secondary"), Vector2());
-				controller_tracker->set_input(SNAME("secondary_click"), false);
-				controller_tracker->set_input(SNAME("secondary_touch"), false);
+				controller_tracker->set_input(SNAME("secondary"), controller_state.secondary_value);
+				controller_tracker->set_input(SNAME("secondary_click"), controller_state.secondary_click);
+				controller_tracker->set_input(SNAME("secondary_touch"), controller_state.secondary_touch);
 				controller_tracker->set_input(SNAME("grip"), controller_state.grip_value);
 				controller_tracker->set_input(SNAME("grip_click"), controller_state.grip_click);
 				controller_tracker->set_input(SNAME("menu_button"), controller_state.menu_click);
@@ -1600,7 +1712,6 @@ bool VisionOSXRInterface::initialize() {
 	rendering_server = RenderingServer::get_singleton();
 	ERR_FAIL_NULL_V(rendering_server, false);
 	rendering_server->call_on_render_thread(callable_mp(&rt, &RenderThread::initialize));
-	sync_tracking_floor_offset_to_render_thread();
 
 	float minimum_supported_near_plane = cp_layer_renderer_capabilities_supported_minimum_near_plane_distance(layer_renderer_capabilities);
 	rendering_server->call_on_render_thread(callable_mp(&rt, &RenderThread::set_minimum_supported_near_plane).bind(minimum_supported_near_plane));
@@ -1681,6 +1792,8 @@ void VisionOSXRInterface::RenderThread::initialize() {
 
 	current_device_anchor = ar_device_anchor_create();
 	has_valid_device_anchor = false;
+	has_valid_origin_from_head = false;
+	origin_from_head = Transform3D();
 
 	initialized = true;
 }
@@ -1699,7 +1812,10 @@ void VisionOSXRInterface::RenderThread::uninitialize() {
 	current_frame = nullptr;
 	current_drawable = nullptr;
 	current_view_count = 2;
+	current_device_anchor = nullptr;
 	has_valid_device_anchor = false;
+	has_valid_origin_from_head = false;
+	origin_from_head = Transform3D();
 	initialized = false;
 }
 
@@ -1747,18 +1863,11 @@ bool VisionOSXRInterface::set_play_area_mode(XRInterface::PlayAreaMode p_mode) {
 	if (xr_server != nullptr) {
 		xr_server->clear_reference_frame();
 	}
-
-	if (initialized) {
-		sync_tracking_floor_offset_to_render_thread();
-	}
 	return true;
 }
 
 void VisionOSXRInterface::set_eye_height(float p_eye_height) {
 	eye_height = MAX(0.0f, p_eye_height);
-	if (initialized) {
-		sync_tracking_floor_offset_to_render_thread();
-	}
 }
 
 float VisionOSXRInterface::get_eye_height() const {
@@ -1767,8 +1876,14 @@ float VisionOSXRInterface::get_eye_height() const {
 
 void VisionOSXRInterface::set_head_pose_from_arkit() {
 	ERR_FAIL_NULL_MSG(current_frame, "Current frame is nil, probably process() has not been called, using identity transform");
+	const auto sync_render_head_pose = [&](const Transform3D &p_head_transform, bool p_valid) {
+		if (rendering_server != nullptr) {
+			rendering_server->call_on_render_thread(callable_mp(&rt, &RenderThread::set_origin_from_head).bind(p_head_transform, p_valid));
+		}
+	};
 	if (!_is_world_tracking_provider_running(world_tracking_provider)) {
 		tracking_state = XRInterface::XR_NOT_TRACKING;
+		sync_render_head_pose(Transform3D(), false);
 		return;
 	}
 
@@ -1779,6 +1894,7 @@ void VisionOSXRInterface::set_head_pose_from_arkit() {
 
 	if (query_anchor_result != ar_device_anchor_query_status_success) {
 		tracking_state = XRInterface::XR_NOT_TRACKING;
+		sync_render_head_pose(Transform3D(), false);
 		return;
 	}
 
@@ -1786,10 +1902,12 @@ void VisionOSXRInterface::set_head_pose_from_arkit() {
 	tracking_state = XRInterface::XR_NORMAL_TRACKING;
 	Transform3D head_transform = MTL::simd_to_transform3D(origin_from_head_simd);
 	update_tracking_floor_reference_from_head(head_transform);
+	const Transform3D adjusted_head_transform = apply_tracking_floor_offset(head_transform);
+	sync_render_head_pose(adjusted_head_transform, true);
 
 	if (head_tracker.is_valid()) {
 		// Set our head position (in real space, reference frame and world scale is applied later)
-		head_tracker->set_pose("default", apply_tracking_floor_offset(head_transform), Vector3(), Vector3(), XRPose::XR_TRACKING_CONFIDENCE_HIGH);
+		head_tracker->set_pose("default", adjusted_head_transform, Vector3(), Vector3(), XRPose::XR_TRACKING_CONFIDENCE_HIGH);
 	}
 }
 
@@ -1802,12 +1920,18 @@ void VisionOSXRInterface::process() {
 
 	ERR_FAIL_NULL_MSG(current_frame, "Layer renderer unexpectedly returned a nil frame, probably the layer renderer has been invalidated and it hasn't been updated to a new one");
 
+	cp_frame_timing_t frame_timing = cp_frame_predict_timing(current_frame);
+	CFTimeInterval trackable_anchor_time = cp_time_to_cf_time_interval(cp_frame_timing_get_presentation_time(frame_timing));
+	if (@available(visionOS 2.0, *)) {
+		trackable_anchor_time = cp_time_to_cf_time_interval(cp_frame_timing_get_trackable_anchor_time(frame_timing));
+	}
+
 	// Set head pose before engine update, so scripts can access fresh head tracker data
 	set_head_pose_from_arkit();
-	update_hand_states_from_arkit();
+	update_hand_states_from_arkit(trackable_anchor_time);
 	update_accessory_tracking_devices();
 	update_accessory_tracking_session();
-	update_spatial_controller_states_from_arkit();
+	update_spatial_controller_states_from_arkit(trackable_anchor_time);
 	apply_hand_states_to_trackers();
 
 	rendering_server->call_on_render_thread(callable_mp(&rt, &RenderThread::set_current_frame).bind((uint64_t)current_frame));
@@ -1819,9 +1943,10 @@ void VisionOSXRInterface::RenderThread::set_minimum_supported_near_plane(float p
 	minimum_supported_near_plane = p_minimum_supported_near_plane;
 }
 
-void VisionOSXRInterface::RenderThread::set_tracking_floor_offset(float p_tracking_floor_offset) {
+void VisionOSXRInterface::RenderThread::set_origin_from_head(const Transform3D &p_origin_from_head, bool p_has_valid_origin_from_head) {
 	ERR_NOT_ON_RENDER_THREAD;
-	tracking_floor_offset = p_tracking_floor_offset;
+	origin_from_head = p_origin_from_head;
+	has_valid_origin_from_head = p_has_valid_origin_from_head;
 }
 
 void VisionOSXRInterface::RenderThread::set_current_frame(uint64_t p_current_frame) {
@@ -1830,23 +1955,16 @@ void VisionOSXRInterface::RenderThread::set_current_frame(uint64_t p_current_fra
 	current_drawable = nullptr;
 	has_valid_device_anchor = false;
 
-	if (!_is_world_tracking_provider_running(world_tracking_provider)) {
+	if (!_is_world_tracking_provider_running(world_tracking_provider) || current_device_anchor == nullptr || current_frame == nullptr) {
 		return;
 	}
 
-	// Query anchor again from the render thread
 	cp_frame_timing_t current_timing = cp_frame_predict_timing(current_frame);
 	CFTimeInterval presentation_time = cp_time_to_cf_time_interval(cp_frame_timing_get_presentation_time(current_timing));
 	ar_device_anchor_query_status_t query_anchor_result = ar_world_tracking_provider_query_device_anchor_at_timestamp(world_tracking_provider, presentation_time, current_device_anchor);
-
-	if (query_anchor_result != ar_device_anchor_query_status_success) {
-		return;
+	if (query_anchor_result == ar_device_anchor_query_status_success) {
+		has_valid_device_anchor = true;
 	}
-	has_valid_device_anchor = true;
-
-	simd_float4x4 origin_from_head_simd = ar_anchor_get_origin_from_anchor_transform(current_device_anchor);
-	origin_from_head = MTL::simd_to_transform3D(origin_from_head_simd);
-	origin_from_head.origin.y += tracking_floor_offset;
 }
 
 uint32_t VisionOSXRInterface::RenderThread::get_view_count() {
@@ -1870,10 +1988,15 @@ Transform3D VisionOSXRInterface::RenderThread::get_camera_transform() {
 
 	XRServer *xr_server = XRServer::get_singleton();
 	ERR_FAIL_NULL_V(xr_server, camera_transform);
+	if (!has_valid_origin_from_head) {
+		return camera_transform;
+	}
+
+	Transform3D scaled_origin_from_head = origin_from_head;
 	// scale our origin point of our transform
 	float world_scale = xr_server->get_world_scale();
-	origin_from_head.origin *= world_scale;
-	camera_transform = origin_from_head;
+	scaled_origin_from_head.origin *= world_scale;
+	camera_transform = scaled_origin_from_head;
 	return camera_transform;
 }
 
@@ -1886,6 +2009,9 @@ Transform3D VisionOSXRInterface::RenderThread::get_transform_for_view(uint32_t p
 	if (initialized) {
 		ERR_FAIL_COND_V(p_view >= get_view_count(), origin_from_eye);
 		ERR_FAIL_NULL_V_MSG(current_drawable, origin_from_eye, "Current drawable is nil, probably pre_render() has not been called, using identity transform");
+		if (!has_valid_origin_from_head) {
+			return origin_from_eye;
+		}
 
 		cp_view_t view = cp_drawable_get_view(current_drawable, p_view);
 		simd_float4x4 head_from_eye_simd = cp_view_get_transform(view);
