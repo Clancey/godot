@@ -52,6 +52,16 @@ final class RendererTaskExecutor: TaskExecutor {
 // MARK: Compositor Services Scene
 
 struct ContentStageConfiguration: CompositorLayerConfiguration {
+	private func preferredLayout(from supportedLayouts: [LayerRenderer.Layout]) -> LayerRenderer.Layout? {
+		let preferredLayouts: [LayerRenderer.Layout] = [.layered, .dedicated, .shared]
+		for layout in preferredLayouts {
+			if supportedLayouts.contains(layout) {
+				return layout
+			}
+		}
+		return supportedLayouts.first
+	}
+
 	func makeConfiguration(capabilities: LayerRenderer.Capabilities, configuration: inout LayerRenderer.Configuration) {
 
 		GDTAppDelegateServiceVisionOS.layerRendererCapabilities = capabilities as __CP_OBJECT_cp_layer_renderer_capabilities
@@ -60,18 +70,19 @@ struct ContentStageConfiguration: CompositorLayerConfiguration {
 		configuration.colorFormat = .rgba16Float
 
 		let supportedLayouts = capabilities.supportedLayouts(options: [])
-		let supportedFoveatedLayouts = capabilities.supportsFoveation ? capabilities.supportedLayouts(options: [.foveationEnabled]) : []
-		let layeredWithFoveation = supportedFoveatedLayouts.contains(.layered)
-		let layeredWithoutFoveation = supportedLayouts.contains(.layered)
+		if capabilities.supportsFoveation {
+			let supportedFoveatedLayouts = capabilities.supportedLayouts(options: [.foveationEnabled])
+			if let foveatedLayout = preferredLayout(from: supportedFoveatedLayouts) {
+				configuration.isFoveationEnabled = true
+				configuration.layout = foveatedLayout
+				return
+			}
+		}
 
-		if layeredWithFoveation {
-			configuration.isFoveationEnabled = true
-			configuration.layout = .layered
-		} else if layeredWithoutFoveation {
-			configuration.isFoveationEnabled = false
-			configuration.layout = .layered
+		configuration.isFoveationEnabled = false
+		if let layout = preferredLayout(from: supportedLayouts) {
+			configuration.layout = layout
 		} else {
-			configuration.isFoveationEnabled = false
 			configuration.layout = .layered
 		}
 	}
