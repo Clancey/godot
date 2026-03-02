@@ -37,6 +37,9 @@
 #include "core/os/os.h"
 #include "drivers/metal/metal_objects.h"
 #include "platform/visionos/godot_app_delegate_service_visionos.h"
+#include "scene/main/scene_tree.h"
+#include "scene/main/viewport.h"
+#include "scene/main/window.h"
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_server_globals.h"
 
@@ -1729,6 +1732,38 @@ bool VisionOSXRInterface::initialize() {
 	float minimum_supported_near_plane = cp_layer_renderer_capabilities_supported_minimum_near_plane_distance(layer_renderer_capabilities);
 	rendering_server->call_on_render_thread(callable_mp(&rt, &RenderThread::set_minimum_supported_near_plane).bind(minimum_supported_near_plane));
 
+	// Detect immersion style from Info.plist to set environment blend mode
+	// and auto-enable transparent background for mixed immersion passthrough.
+	NSDictionary *info_plist = [[NSBundle mainBundle] infoDictionary];
+	NSDictionary *scene_manifest = info_plist[@"UIApplicationSceneManifest"];
+	if (scene_manifest != nil) {
+		NSDictionary *scene_configs = scene_manifest[@"UISceneConfigurations"];
+		if (scene_configs != nil) {
+			NSArray *cp_configs = scene_configs[@"CPSceneSessionRoleImmersiveSpaceApplication"];
+			if (cp_configs == nil) {
+				cp_configs = scene_configs[@"UISceneSessionRoleImmersiveSpaceApplication"];
+			}
+			if (cp_configs != nil && [cp_configs count] > 0) {
+				NSString *immersion_style = cp_configs[0][@"UISceneInitialImmersionStyle"];
+				if (immersion_style != nil && [immersion_style isEqualToString:@"UIImmersionStyleFull"]) {
+					environment_blend_mode = XR_ENV_BLEND_MODE_OPAQUE;
+				} else {
+					environment_blend_mode = XR_ENV_BLEND_MODE_ALPHA_BLEND;
+				}
+			}
+		}
+	}
+
+	if (environment_blend_mode == XR_ENV_BLEND_MODE_ALPHA_BLEND) {
+		// For mixed immersion, visionOS requires alpha=0 where depth=0 for correct
+		// passthrough compositing. Enable transparent background on the main viewport.
+		Window *main_vp = SceneTree::get_singleton() ? SceneTree::get_singleton()->get_root() : nullptr;
+		if (main_vp != nullptr) {
+			main_vp->set_transparent_background(true);
+			print_verbose("visionOS: Mixed immersion detected, enabled transparent background for passthrough.");
+		}
+	}
+
 	// Make this our primary interface
 	xr_server->set_primary_interface(this);
 
@@ -1878,6 +1913,25 @@ bool VisionOSXRInterface::set_play_area_mode(XRInterface::PlayAreaMode p_mode) {
 	if (xr_server != nullptr) {
 		xr_server->clear_reference_frame();
 	}
+	return true;
+}
+
+Array VisionOSXRInterface::get_supported_environment_blend_modes() {
+	Array modes;
+	modes.push_back(XR_ENV_BLEND_MODE_OPAQUE);
+	modes.push_back(XR_ENV_BLEND_MODE_ALPHA_BLEND);
+	return modes;
+}
+
+XRInterface::EnvironmentBlendMode VisionOSXRInterface::get_environment_blend_mode() const {
+	return environment_blend_mode;
+}
+
+bool VisionOSXRInterface::set_environment_blend_mode(EnvironmentBlendMode p_mode) {
+	if (p_mode != XR_ENV_BLEND_MODE_OPAQUE && p_mode != XR_ENV_BLEND_MODE_ALPHA_BLEND) {
+		return false;
+	}
+	environment_blend_mode = p_mode;
 	return true;
 }
 

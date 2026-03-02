@@ -127,6 +127,7 @@ private:
 
 	bool initialized = false;
 	XRInterface::TrackingStatus tracking_state;
+	XRInterface::EnvironmentBlendMode environment_blend_mode = XRInterface::XR_ENV_BLEND_MODE_ALPHA_BLEND;
 	XRInterface::PlayAreaMode play_area_mode = XRInterface::XR_PLAY_AREA_ROOMSCALE;
 	float eye_height = 1.7f;
 	float tracking_reference_head_height = 0.0f;
@@ -284,6 +285,10 @@ public:
 	virtual bool supports_play_area_mode(XRInterface::PlayAreaMode p_mode) override;
 	virtual XRInterface::PlayAreaMode get_play_area_mode() const override;
 	virtual bool set_play_area_mode(XRInterface::PlayAreaMode p_mode) override;
+
+	virtual Array get_supported_environment_blend_modes() override;
+	virtual EnvironmentBlendMode get_environment_blend_mode() const override;
+	virtual bool set_environment_blend_mode(EnvironmentBlendMode mode) override;
 
 	void set_eye_height(float p_eye_height);
 	float get_eye_height() const;
