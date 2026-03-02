@@ -145,10 +145,11 @@ String _build_game_controller_plist_content(const Ref<EditorExportPreset> &p_pre
 
 	if (!_plist_has_key(p_existing_plist_content, "NSWorldSensingUsageDescription")) {
 		String description = p_preset->get("privacy/world_sensing_usage_description");
-		if (!description.is_empty()) {
-			plist += "<key>NSWorldSensingUsageDescription</key>\n";
-			plist += "<string>" + description.xml_escape(true) + "</string>\n";
+		if (description.is_empty()) {
+			description = "This app uses world sensing for spatial tracking.";
 		}
+		plist += "<key>NSWorldSensingUsageDescription</key>\n";
+		plist += "<string>" + description.xml_escape(true) + "</string>\n";
 	}
 
 	return plist;

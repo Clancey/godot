@@ -636,27 +636,41 @@ void VisionOSXRInterface::configure_arkit_session_authorization_and_state_handle
 	ar_session_set_data_provider_state_change_handler(ar_session, nullptr, nullptr);
 	ar_session_set_authorization_update_handler(ar_session, nullptr, nullptr);
 
+	NSDictionary *info_plist = [[NSBundle mainBundle] infoDictionary];
+
 	ar_authorization_type_t requested_authorizations = ar_authorization_type_none;
 	if (hand_tracking_active && hand_tracking_provider != nullptr) {
-		requested_authorizations = ar_authorization_type_t(requested_authorizations | ar_hand_tracking_provider_get_required_authorization_type());
+		if (info_plist[@"NSHandsTrackingUsageDescription"] != nil) {
+			requested_authorizations = ar_authorization_type_t(requested_authorizations | ar_hand_tracking_provider_get_required_authorization_type());
+		} else {
+			WARN_PRINT("visionOS: NSHandsTrackingUsageDescription missing from Info.plist, skipping hand tracking authorization request.");
+		}
 	}
 #if GODOT_VISIONOS_XR_HAS_ACCESSORY_TRACKING
 	if (accessory_tracking_supported && accessory_tracking_provider != nullptr) {
-		requested_authorizations = ar_authorization_type_t(requested_authorizations | ar_accessory_tracking_provider_get_required_authorization_type());
+		if (info_plist[@"NSAccessoryTrackingUsageDescription"] != nil) {
+			requested_authorizations = ar_authorization_type_t(requested_authorizations | ar_accessory_tracking_provider_get_required_authorization_type());
+		} else {
+			WARN_PRINT("visionOS: NSAccessoryTrackingUsageDescription missing from Info.plist, skipping accessory tracking authorization request.");
+		}
 	}
 #endif
+
+	// Request world sensing authorization if the plist key is present.
+	if (info_plist[@"NSWorldSensingUsageDescription"] != nil) {
+		requested_authorizations = ar_authorization_type_t(requested_authorizations | ar_authorization_type_world_sensing);
+	}
+
+	run_arkit_session_with_active_providers();
 
 	if (requested_authorizations == ar_authorization_type_none) {
 		return;
 	}
 
-	ar_session_query_authorization_results(ar_session, requested_authorizations, ^(ar_authorization_results_t p_authorization_results, ar_error_t p_error) {
-		(void)p_authorization_results;
-		(void)p_error;
-	});
 	ar_session_request_authorization(ar_session, requested_authorizations, ^(ar_authorization_results_t p_authorization_results, ar_error_t p_error) {
-		(void)p_authorization_results;
-		(void)p_error;
+		if (p_error != nullptr) {
+			print_verbose("visionOS: ARKit authorization request completed with error.");
+		}
 	});
 }
 
@@ -1696,7 +1710,6 @@ bool VisionOSXRInterface::initialize() {
 
 	initialize_accessory_tracking_provider();
 	configure_arkit_session_authorization_and_state_handlers();
-	run_arkit_session_with_active_providers();
 	accessory_tracking_needs_session_refresh = false;
 
 	// Head tracker initialization
@@ -1823,8 +1836,10 @@ void VisionOSXRInterface::update_layer_renderer(cp_layer_renderer_t p_layer_rend
 	layer_renderer = p_layer_renderer;
 	layer_renderer_capabilities = p_layer_renderer_capabilities;
 
-	float minimum_supported_near_plane = cp_layer_renderer_capabilities_supported_minimum_near_plane_distance(layer_renderer_capabilities);
-	rendering_server->call_on_render_thread(callable_mp(&rt, &RenderThread::set_minimum_supported_near_plane).bind(minimum_supported_near_plane));
+	if (rendering_server) {
+		float minimum_supported_near_plane = cp_layer_renderer_capabilities_supported_minimum_near_plane_distance(layer_renderer_capabilities);
+		rendering_server->call_on_render_thread(callable_mp(&rt, &RenderThread::set_minimum_supported_near_plane).bind(minimum_supported_near_plane));
+	}
 }
 
 Dictionary VisionOSXRInterface::get_system_info() {
