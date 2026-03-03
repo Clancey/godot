@@ -36,6 +36,8 @@
 #include "core/config/project_settings.h"
 #include "main/main.h"
 
+static JoypadApple *joypad_apple_singleton = nullptr;
+
 class API_AVAILABLE(macos(11), ios(14.0), tvos(14.0)) RumbleMotor {
 	CHHapticEngine *engine;
 	id<CHHapticPatternPlayer> player;
@@ -162,7 +164,11 @@ GameController::GameController(int p_joy_id, GCController *p_controller) :
 
 	auto BUTTON = [l_joy_id](JoyButton p_button) {
 		return ^(GCControllerButtonInput *button, float value, BOOL pressed) {
-			Input::get_singleton()->joy_button(l_joy_id, p_button, pressed);
+			Input *input = Input::get_singleton();
+			if (!input) {
+				return;
+			}
+			input->joy_button(l_joy_id, p_button, pressed);
 		};
 	};
 
@@ -422,6 +428,8 @@ GameController::~GameController() {
 }
 
 JoypadApple::JoypadApple() {
+	joypad_apple_singleton = this;
+
 	connect_observer = [NSNotificationCenter.defaultCenter
 			addObserverForName:GCControllerDidConnectNotification
 						object:nil
@@ -431,7 +439,11 @@ JoypadApple::JoypadApple() {
 						if (!controller) {
 							return;
 						}
-						add_joypad(controller);
+						JoypadApple *joypad = joypad_apple_singleton;
+						if (!joypad) {
+							return;
+						}
+						joypad->add_joypad(controller);
 					}];
 
 	disconnect_observer = [NSNotificationCenter.defaultCenter
@@ -443,7 +455,11 @@ JoypadApple::JoypadApple() {
 						if (!controller) {
 							return;
 						}
-						remove_joypad(controller);
+						JoypadApple *joypad = joypad_apple_singleton;
+						if (!joypad) {
+							return;
+						}
+						joypad->remove_joypad(controller);
 					}];
 
 	if (@available(macOS 11.3, iOS 14.5, tvOS 14.5, *)) {
@@ -452,6 +468,8 @@ JoypadApple::JoypadApple() {
 }
 
 JoypadApple::~JoypadApple() {
+	joypad_apple_singleton = nullptr;
+
 	for (KeyValue<int, GameController *> &E : joypads) {
 		memdelete(E.value);
 		E.value = nullptr;
@@ -488,8 +506,13 @@ void JoypadApple::add_joypad(GCController *p_controller) {
 		return;
 	}
 
+	Input *input = Input::get_singleton();
+	if (!input) {
+		return;
+	}
+
 	// Get a new id for our controller.
-	int joy_id = Input::get_singleton()->get_unused_joy_id();
+	int joy_id = input->get_unused_joy_id();
 
 	if (joy_id == -1) {
 		print_verbose("Couldn't retrieve new joy ID.");
@@ -508,7 +531,7 @@ void JoypadApple::add_joypad(GCController *p_controller) {
 	} else {
 		device_name = p_controller.vendorName.UTF8String;
 	}
-	Input::get_singleton()->joy_connection_changed(joy_id, true, String::utf8(device_name));
+	input->joy_connection_changed(joy_id, true, String::utf8(device_name));
 
 	// Assign our player index.
 	joypads.insert(joy_id, memnew(GameController(joy_id, p_controller)));
@@ -524,7 +547,10 @@ void JoypadApple::remove_joypad(GCController *p_controller) {
 	controller_to_joy_id.erase(p_controller);
 
 	// Tell Godot this joystick is no longer there.
-	Input::get_singleton()->joy_connection_changed(joy_id, false, "");
+	Input *input = Input::get_singleton();
+	if (input) {
+		input->joy_connection_changed(joy_id, false, "");
+	}
 
 	// And remove it from our dictionary.
 	GameController **old = joypads.getptr(joy_id);
@@ -595,6 +621,9 @@ void JoypadApple::joypad_vibration_stop(GameController &p_joypad, uint64_t p_tim
 
 void JoypadApple::process_joypads() {
 	Input *input = Input::get_singleton();
+	if (!input) {
+		return;
+	}
 
 	if (@available(macOS 11.0, iOS 14.0, tvOS 14.0, *)) {
 		for (KeyValue<int, GameController *> &E : joypads) {

@@ -36,6 +36,12 @@
 
 #import <GameController/GameController.h>
 
+#if defined(__VISION_OS_VERSION_MAX_ALLOWED) && __VISION_OS_VERSION_MAX_ALLOWED >= 260200
+#define GODOT_VISIONOS_HAS_STYLUS_EVENT_TYPES 1
+#else
+#define GODOT_VISIONOS_HAS_STYLUS_EVENT_TYPES 0
+#endif
+
 @interface GDTViewVisionOS ()
 
 GODOT_CLANG_WARNING_PUSH_AND_IGNORE("-Wobjc-property-synthesis")
@@ -51,7 +57,13 @@ GODOT_CLANG_WARNING_POP
 
 	// Enable GamePad handler
 	GCEventInteraction *gamepadInteraction = [[GCEventInteraction alloc] init];
-	gamepadInteraction.handledEventTypes = GCUIEventTypeGamepad;
+	GCUIEventTypes handled_event_types = GCUIEventTypeGamepad;
+#if GODOT_VISIONOS_HAS_STYLUS_EVENT_TYPES
+	if (@available(visionOS 26.2, *)) {
+		handled_event_types |= GCUIEventTypeStylus;
+	}
+#endif
+	gamepadInteraction.handledEventTypes = handled_event_types;
 	[self addInteraction:gamepadInteraction];
 }
 

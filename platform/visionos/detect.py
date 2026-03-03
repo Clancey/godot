@@ -142,10 +142,6 @@ def configure(env: "SConsEnvironment"):
         print_warning("The visionOS platform does not support the Vulkan rendering driver")
         env["vulkan"] = False
 
-    if env["metal"] and env["simulator"]:
-        print_warning("visionOS Simulator does not support the Metal rendering driver")
-        env["metal"] = False
-
     if env["metal"]:
         env.AppendUnique(CPPDEFINES=["METAL_ENABLED", "RD_ENABLED"])
         env.Prepend(

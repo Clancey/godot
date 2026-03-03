@@ -55,16 +55,26 @@ extern void apple_embedded_finish();
 	Ref<VisionOSXRInterface> visionos_xr_interface = VisionOSXRInterface::find_interface();
 	if (visionos_xr_interface.is_valid()) {
 		visionos_xr_interface->update_layer_renderer(_layer_renderer, _layer_renderer_capabilities);
+		if (!visionos_xr_interface->is_initialized()) {
+			visionos_xr_interface->initialize();
+		}
 	}
 }
 
 - (void)startRenderLoop {
-	Ref<VisionOSXRInterface> visionos_xr_interface = VisionOSXRInterface::find_interface();
+	[self updateXRInterface];
 	cp_layer_renderer_state previous_state = cp_layer_renderer_state_running;
-	if (visionos_xr_interface.is_valid()) {
-		visionos_xr_interface->emit_signal_enum(VisionOSXRInterface::VISIONOS_XR_SIGNAL_SESSION_STARTED);
-	}
+	bool did_emit_session_started = false;
 	while (true) {
+		// The XR interface may not be registered on the very first iteration.
+		// Keep refreshing and initializing it before running frame iteration.
+		[self updateXRInterface];
+		Ref<VisionOSXRInterface> visionos_xr_interface = VisionOSXRInterface::find_interface();
+		if (visionos_xr_interface.is_valid() && !did_emit_session_started) {
+			visionos_xr_interface->emit_signal_enum(VisionOSXRInterface::VISIONOS_XR_SIGNAL_SESSION_STARTED);
+			did_emit_session_started = true;
+		}
+
 		cp_layer_renderer_state state = cp_layer_renderer_get_state(_layer_renderer);
 		if (state == cp_layer_renderer_state_invalidated) {
 			if (visionos_xr_interface.is_valid()) {
@@ -83,6 +93,12 @@ extern void apple_embedded_finish();
 			@autoreleasepool {
 				if (previous_state == cp_layer_renderer_state_paused && visionos_xr_interface.is_valid()) {
 					visionos_xr_interface->emit_signal_enum(VisionOSXRInterface::VISIONOS_XR_SIGNAL_SESSION_RESUMED);
+				}
+				if (!visionos_xr_interface.is_valid() || !visionos_xr_interface->is_initialized()) {
+					// Avoid submitting render frames before XR is ready, otherwise compositor drawables
+					// can be consumed without a matching present and the queue can stall.
+					[NSThread sleepForTimeInterval:0.001];
+					continue;
 				}
 				[self renderFrame];
 			}
