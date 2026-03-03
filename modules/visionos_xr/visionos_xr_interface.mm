@@ -2165,17 +2165,8 @@ Rect2i VisionOSXRInterface::RenderThread::get_render_region() {
 }
 
 Size2 VisionOSXRInterface::RenderThread::get_render_target_size() {
-	Size2 target_size;
-
-	ERR_NOT_ON_RENDER_THREAD_V(target_size);
-
-	if (!initialized) {
-		return target_size;
-	}
-	ERR_FAIL_NULL_V_MSG(current_drawable, target_size, "Current drawable is nil, probably pre_render() has not been called");
-	id<MTLTexture> color_texture = cp_drawable_get_color_texture(current_drawable, 0);
-	target_size = Size2(color_texture.width, color_texture.height);
-	return target_size;
+	// Read atomic values cached by pre_render(). Safe to call from any thread.
+	return Size2(cached_render_target_width.get(), cached_render_target_height.get());
 }
 
 void VisionOSXRInterface::RenderThread::start_frame_update() {
@@ -2224,6 +2215,11 @@ void VisionOSXRInterface::RenderThread::pre_render() {
 		}
 	}
 	ERR_FAIL_NULL_MSG(current_drawable, "Built-in drawable not found, aborting");
+
+	// Cache render target size atomically so it can be safely read from the game thread.
+	id<MTLTexture> color_texture = cp_drawable_get_color_texture(current_drawable, 0);
+	cached_render_target_width.set(color_texture.width);
+	cached_render_target_height.set(color_texture.height);
 
 	if (has_valid_device_anchor && current_device_anchor != nil) {
 		cp_drawable_set_device_anchor(current_drawable, current_device_anchor);

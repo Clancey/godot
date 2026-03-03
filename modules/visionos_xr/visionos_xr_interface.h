@@ -34,6 +34,7 @@
 
 #include "core/templates/hash_map.h"
 #include "core/templates/hash_set.h"
+#include "core/templates/safe_refcount.h"
 #include "drivers/metal/rendering_context_driver_metal.h"
 #include "drivers/metal/rendering_device_driver_metal.h"
 #include "servers/rendering/renderer_compositor.h"
@@ -176,6 +177,11 @@ private:
 		RID current_depth_texture_id;
 		RD::Texture current_rasterization_rate_map;
 		RID current_rasterization_rate_map_id;
+
+		// Cached render target size, set in pre_render() on the render thread
+		// and read from the game thread via get_render_target_size().
+		SafeNumeric<uint32_t> cached_render_target_width{ 0 };
+		SafeNumeric<uint32_t> cached_render_target_height{ 0 };
 
 	public:
 		void initialize();
