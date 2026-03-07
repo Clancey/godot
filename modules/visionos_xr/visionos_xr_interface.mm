@@ -64,8 +64,7 @@ ar_world_tracking_provider_t VisionOSXRInterface::world_tracking_provider = null
 
 static const char *VISIONOS_INTERACTION_PROFILE_HAND = "/interaction_profiles/ext/hand_interaction_ext";
 static const char *VISIONOS_INTERACTION_PROFILE_SIMPLE_CONTROLLER = "/interaction_profiles/khr/simple_controller";
-static const char *VISIONOS_INTERACTION_PROFILE_OCULUS_TOUCH = "/interaction_profiles/oculus/touch_controller";
-static const char *VISIONOS_INTERACTION_PROFILE_NONE = "/interaction_profiles/none";
+static const char *VISIONOS_INTERACTION_PROFILE_PSVR2 = "/interaction_profiles/sony/psvr2_controller";
 static constexpr float VISIONOS_PINCH_PRESS_DISTANCE_M = 0.025f;
 static constexpr float VISIONOS_PINCH_RELEASE_DISTANCE_M = 0.04f;
 static constexpr float VISIONOS_PINCH_ANALOG_MAX_DISTANCE_M = 0.06f;
@@ -484,7 +483,10 @@ void VisionOSXRInterface::initialize_interaction_trackers(XRServer *p_xr_server)
 		controller_tracker->set_tracker_name(tracker_name);
 		controller_tracker->set_tracker_desc(tracker_desc);
 		controller_tracker->set_tracker_hand(is_left ? XRPositionalTracker::TRACKER_HAND_LEFT : XRPositionalTracker::TRACKER_HAND_RIGHT);
-		controller_tracker->set_tracker_profile(VISIONOS_INTERACTION_PROFILE_NONE);
+		// Initialize with hand interaction profile so XR Tools reads the correct
+		// grip rotation (0°) on the first frame. The profile gets overridden to
+		// the controller profile when a controller is connected.
+		controller_tracker->set_tracker_profile(VISIONOS_INTERACTION_PROFILE_HAND);
 		p_xr_server->add_tracker(controller_tracker);
 		hand_controller_trackers[i] = controller_tracker;
 
@@ -613,17 +615,20 @@ Transform3D VisionOSXRInterface::make_aim_transform_from_hand(const Transform3D 
 		up = Vector3(0.0f, 1.0f, 0.0f);
 	}
 
-	Vector3 right = up.cross(forward);
+	// OpenXR aim convention: -Z = aiming direction, +Y = up, +X = right.
+	// So the basis Z axis points BACKWARD (toward wrist), not forward.
+	Vector3 z_axis = -forward; // Z toward wrist, -Z toward target/fingers
+	Vector3 right = up.cross(z_axis);
 	if (Math::is_zero_approx(right.length_squared())) {
 		return aim_transform;
 	}
 	right.normalize();
-	up = forward.cross(right).normalized();
+	up = z_axis.cross(right).normalized();
 
 	Basis basis;
 	basis.set_column(0, right);
 	basis.set_column(1, up);
-	basis.set_column(2, forward);
+	basis.set_column(2, z_axis);
 
 	// Keep aim origin near the hand body (not at fingertip) so controller-space
 	// interactions like pickup colliders stay aligned while still aiming with index direction.
@@ -1163,25 +1168,25 @@ void VisionOSXRInterface::update_hand_state_from_anchor(HandIndex p_hand_index, 
 	state.palm_transform = palm.transform;
 
 	const HandJointState &wrist = state.joints[XRHandTracker::HAND_JOINT_WRIST];
-	// Compute grip transform oriented per OpenXR hand interaction convention:
-	// Origin at palm center, -Z toward fingers, Y toward the back of the hand (dorsal).
-	// The wrist bone frame after adjustments has: X toward fingers, Z toward dorsal (left)
-	// or ventral (right). We re-orient to match OpenXR grip so that existing apps
-	// (e.g. XR Tools with pose="grip") work without needing per-platform offsets.
-	if (wrist.tracked && middle_proximal.tracked) {
+	// Grip basis from the wrist bone.
+	// After arkit_to_openxr + bone_adjustment, wrist basis columns:
+	//   col(0) = lateral (leftward for both hands)
+	//   col(1) = toward fingertips
+	//   col(2) = ventral (palm side)
+	// Left and right hand meshes are mirrors, so X and Y signs differ per hand.
+	// Z = -col(1) (toward wrist, so -Z = toward fingers) is the same for both.
+	// Origin always uses wrist position for stability (palm midpoint can jump
+	// when individual finger joints lose tracking at certain angles).
+	const float hs = (p_hand_index == HAND_INDEX_LEFT) ? 1.0f : -1.0f;
+	if (wrist.tracked) {
 		const Basis &bone_basis = wrist.transform.basis;
-		// After bone adjustments: column(0)=toward fingers, column(2)=dorsal(left)/ventral(right)
-		const float hand_sign = (p_hand_index == HAND_INDEX_LEFT) ? -1.0f : 1.0f;
 		Basis grip_basis;
-		grip_basis.set_column(0, hand_sign * bone_basis.get_column(1)); // X: lateral
-		grip_basis.set_column(1, -hand_sign * bone_basis.get_column(2)); // Y: dorsal
-		grip_basis.set_column(2, -bone_basis.get_column(0)); // Z: toward wrist (-Z toward fingers)
+		grip_basis.set_column(0, hs * bone_basis.get_column(2));
+		grip_basis.set_column(1, -hs * bone_basis.get_column(0));
+		grip_basis.set_column(2, -bone_basis.get_column(1));
 		grip_basis.orthonormalize();
-
-		state.grip_transform.origin = palm.transform.origin;
+		state.grip_transform.origin = wrist.transform.origin;
 		state.grip_transform.basis = grip_basis;
-	} else if (wrist.tracked) {
-		state.grip_transform = wrist.transform;
 	} else {
 		state.grip_transform = state.palm_transform;
 	}
@@ -1527,7 +1532,7 @@ void VisionOSXRInterface::apply_hand_states_to_trackers() {
 		if (controller_tracker.is_valid()) {
 			if (use_controller_state) {
 				const XRPose::TrackingConfidence tracking_confidence = controller_state.tracking_rank >= 3 ? XRPose::XR_TRACKING_CONFIDENCE_HIGH : XRPose::XR_TRACKING_CONFIDENCE_LOW;
-				controller_tracker->set_tracker_profile(controller_state.has_extended_inputs ? VISIONOS_INTERACTION_PROFILE_OCULUS_TOUCH : VISIONOS_INTERACTION_PROFILE_SIMPLE_CONTROLLER);
+				controller_tracker->set_tracker_profile(controller_state.has_extended_inputs ? VISIONOS_INTERACTION_PROFILE_PSVR2 : VISIONOS_INTERACTION_PROFILE_SIMPLE_CONTROLLER);
 				controller_tracker->set_pose(SNAME("default"), apply_floor_offset(controller_state.default_transform), controller_state.linear_velocity, controller_state.angular_velocity, tracking_confidence);
 				controller_tracker->set_pose(SNAME("aim"), apply_floor_offset(controller_state.aim_transform), controller_state.linear_velocity, controller_state.angular_velocity, tracking_confidence);
 				controller_tracker->set_pose(SNAME("grip"), apply_floor_offset(controller_state.grip_transform), controller_state.linear_velocity, controller_state.angular_velocity, tracking_confidence);
@@ -1542,7 +1547,9 @@ void VisionOSXRInterface::apply_hand_states_to_trackers() {
 				controller_tracker->set_pose(SNAME("palm_pose"), apply_floor_offset(hand_state.palm_transform), Vector3(), Vector3(), XRPose::XR_TRACKING_CONFIDENCE_HIGH);
 				controller_tracker->set_pose(SNAME("skeleton"), apply_floor_offset(hand_state.palm_transform), Vector3(), Vector3(), XRPose::XR_TRACKING_CONFIDENCE_HIGH);
 			} else {
-				controller_tracker->set_tracker_profile(VISIONOS_INTERACTION_PROFILE_NONE);
+				// Don't reset the profile to NONE — leave the last known profile
+				// so XR Tools (and other consumers) can still read what device type
+				// is attached.  Only invalidate the poses to signal loss of tracking.
 				controller_tracker->invalidate_pose(SNAME("default"));
 				controller_tracker->invalidate_pose(SNAME("aim"));
 				controller_tracker->invalidate_pose(SNAME("grip"));
