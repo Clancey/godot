@@ -67,7 +67,7 @@ RenderingContextDriverMetal::~RenderingContextDriverMetal() {
 }
 
 Error RenderingContextDriverMetal::initialize() {
-	if (OS::get_singleton()->get_environment("MTL_CAPTURE_ENABLED") == "1") {
+	if (OS::get_singleton()->get_environment("MTL_CAPTURE_ENABLED") == "1" || OS::get_singleton()->get_environment("MTLCAPTURE_DESTINATION_DEVELOPER_TOOLS_ENABLE") == "1") {
 		capture_available = true;
 	}
 

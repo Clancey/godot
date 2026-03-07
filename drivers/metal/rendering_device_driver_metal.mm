@@ -69,6 +69,19 @@
 typedef uint64_t MTLGPUAddress;
 #endif
 
+#import <objc/runtime.h>
+
+static bool _class_conforms_to_protocol_recursive(Class p_class, Protocol *p_protocol) {
+	Class current = p_class;
+	while (current != nil) {
+		if (class_conformsToProtocol(current, p_protocol)) {
+			return true;
+		}
+		current = class_getSuperclass(current);
+	}
+	return false;
+}
+
 #pragma mark - Logging
 
 extern os_log_t LOG_DRIVER;
@@ -1115,10 +1128,13 @@ RDD::FramebufferID RenderingDeviceDriverMetal::framebuffer_create(RenderPassID p
 		id native_attachment = rid::get(p_attachments[i]);
 		id<MTLTexture> native_texture = nil;
 		bool attachment_is_rasterization_rate_map = false;
-		if ([native_attachment conformsToProtocol:@protocol(MTLRasterizationRateMap)]) {
+		// Use class_conformsToProtocol with superclass traversal, because
+		// conformsToProtocol: on the instance may not check the full class hierarchy.
+		Class cls = object_getClass(native_attachment);
+		if (_class_conforms_to_protocol_recursive(cls, @protocol(MTLRasterizationRateMap))) {
 			rasterization_rate_map = native_attachment;
 			attachment_is_rasterization_rate_map = true;
-		} else if ([native_attachment conformsToProtocol:@protocol(MTLTexture)]) {
+		} else if (_class_conforms_to_protocol_recursive(cls, @protocol(MTLTexture))) {
 			native_texture = native_attachment;
 		}
 		if (native_texture == nil && !attachment_is_rasterization_rate_map) {
