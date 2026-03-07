@@ -179,9 +179,9 @@ void EditorExportPlatformVisionOS::get_export_options(List<ExportOption> *r_opti
 
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "application/min_visionos_version"), get_minimum_deployment_target()));
 
-	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/app_role", PROPERTY_HINT_ENUM, "Window,Immersive"), 0));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/app_role", PROPERTY_HINT_ENUM, "Window,Immersive"), 1));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/immersion_style", PROPERTY_HINT_ENUM, "Full,Mixed"), 1));
-	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/game_controller_interaction", PROPERTY_HINT_ENUM, "Disabled,Supported,Required"), 0));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/game_controller_interaction", PROPERTY_HINT_ENUM, "Disabled,Supported,Required"), 1));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/upper_limb_visibility", PROPERTY_HINT_ENUM, "Auto,Visible,Hidden"), 0));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/persistent_system_overlays", PROPERTY_HINT_ENUM, "Auto,Visible,Hidden"), 0));
 
