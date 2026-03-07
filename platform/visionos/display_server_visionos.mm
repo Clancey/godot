@@ -40,8 +40,8 @@ DisplayServerVisionOS::DisplayServerVisionOS(const String &p_rendering_driver, W
 		DisplayServerAppleEmbedded(p_rendering_driver, p_mode, p_vsync_mode, p_flags, p_position, p_resolution, p_screen, p_context, p_parent_window, r_error) {
 	String rendering_method = OS::get_singleton()->get_current_rendering_method();
 	GDTRenderMode app_delegate_render_mode = GDTAppDelegateServiceVisionOS.renderMode;
-	if (app_delegate_render_mode == GDTRenderModeCompositorServices && rendering_method == "forward_plus") {
-		WARN_PRINT_ONCE("visionOS in immersive mode doesn't support the Forward+ renderer, switching to the Mobile renderer.");
+	if (app_delegate_render_mode == GDTRenderModeCompositorServices && rendering_method != "mobile") {
+		WARN_PRINT_ONCE(vformat("visionOS in immersive mode only supports the Mobile renderer, switching from '%s'.", rendering_method));
 		OS::get_singleton()->set_current_rendering_method("mobile");
 	}
 }
@@ -50,7 +50,15 @@ DisplayServerVisionOS::~DisplayServerVisionOS() {
 }
 
 DisplayServer *DisplayServerVisionOS::create_func(const String &p_rendering_driver, WindowMode p_mode, DisplayServer::VSyncMode p_vsync_mode, uint32_t p_flags, const Vector2i *p_position, const Vector2i &p_resolution, int p_screen, Context p_context, int64_t p_parent_window, Error &r_error) {
-	return memnew(DisplayServerVisionOS(p_rendering_driver, p_mode, p_vsync_mode, p_flags, p_position, p_resolution, p_screen, p_context, p_parent_window, r_error));
+	String driver = p_rendering_driver;
+	// visionOS only supports Metal. Force it if the project is set to OpenGL/Compatibility.
+	if (driver == "opengl3") {
+		WARN_PRINT_ONCE("visionOS does not support the OpenGL rendering driver, switching to Metal with Mobile renderer.");
+		driver = "metal";
+		OS::get_singleton()->set_current_rendering_method("mobile");
+		OS::get_singleton()->set_current_rendering_driver_name("metal");
+	}
+	return memnew(DisplayServerVisionOS(driver, p_mode, p_vsync_mode, p_flags, p_position, p_resolution, p_screen, p_context, p_parent_window, r_error));
 }
 
 void DisplayServerVisionOS::register_visionos_driver() {

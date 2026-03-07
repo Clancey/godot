@@ -263,7 +263,11 @@ private:
 
 public:
 	static Ref<VisionOSXRInterface> find_interface() {
-		return XRServer::get_singleton()->find_interface(name);
+		XRServer *xr_server = XRServer::get_singleton();
+		if (xr_server == nullptr) {
+			return Ref<VisionOSXRInterface>();
+		}
+		return xr_server->find_interface(name);
 	}
 
 	VisionOSXRInterface();
