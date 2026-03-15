@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  app_delegate_service.h                                                */
+/*  register_types.mm                                                     */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,15 +28,54 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#pragma once
+#include "register_types.h"
 
-#import <UIKit/UIKit.h>
+#ifdef VISIONOS_ENABLED
 
-@class GDTViewController;
+#include "visionos_xr_interface.h"
 
-@interface GDTAppDelegateService : NSObject <UIApplicationDelegate>
+Ref<VisionOSXRInterface> visionos_xr;
 
-@property(strong, nonatomic, nullable) UIWindow *window;
-@property(weak, class, nonatomic, nullable) GDTViewController *viewController;
+#endif // VISIONOS_ENABLED
 
-@end
+void initialize_visionos_xr_module(ModuleInitializationLevel p_level) {
+#ifdef VISIONOS_ENABLED
+	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+		return;
+	}
+
+	GDREGISTER_CLASS(VisionOSXRInterface);
+
+	if (XRServer::get_singleton()) {
+		visionos_xr.instantiate();
+		XRServer::get_singleton()->add_interface(visionos_xr);
+	}
+#else
+	(void)p_level;
+#endif // VISIONOS_ENABLED
+}
+
+void uninitialize_visionos_xr_module(ModuleInitializationLevel p_level) {
+#ifdef VISIONOS_ENABLED
+	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+		return;
+	}
+
+	if (visionos_xr.is_valid()) {
+		// uninitialize our interface if it is initialized
+		if (visionos_xr->is_initialized()) {
+			visionos_xr->uninitialize();
+		}
+
+		// unregister our interface from the XR server
+		if (XRServer::get_singleton()) {
+			XRServer::get_singleton()->remove_interface(visionos_xr);
+		}
+
+		// and release
+		visionos_xr.unref();
+	}
+#else
+	(void)p_level;
+#endif // VISIONOS_ENABLED
+}

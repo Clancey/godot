@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  app_delegate_service.h                                                */
+/*  godot_renderer.h                                                      */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,13 +30,20 @@
 
 #pragma once
 
-#import <UIKit/UIKit.h>
+#import <Foundation/Foundation.h>
 
-@class GDTViewController;
+inline void safeDispatchSyncToMain(void (^block)(void)) {
+	if ([NSThread isMainThread]) {
+		block();
+	} else {
+		dispatch_sync(dispatch_get_main_queue(), block);
+	}
+}
 
-@interface GDTAppDelegateService : NSObject <UIApplicationDelegate>
+@interface GDTRenderer : NSObject
 
-@property(strong, nonatomic, nullable) UIWindow *window;
-@property(weak, class, nonatomic, nullable) GDTViewController *viewController;
+@property(assign, readonly, nonatomic) BOOL hasFinishedSetup;
+
+- (BOOL)setUp;
 
 @end

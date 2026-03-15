@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  app_delegate_service.h                                                */
+/*  godot_app_delegate_visionos.mm                                        */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,15 +28,14 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#pragma once
+#import "godot_app_delegate_visionos.h"
 
-#import <UIKit/UIKit.h>
+#include "godot_app_delegate_service_visionos.h"
 
-@class GDTViewController;
+@implementation GDTAppDelegateVisionOS
 
-@interface GDTAppDelegateService : NSObject <UIApplicationDelegate>
-
-@property(strong, nonatomic, nullable) UIWindow *window;
-@property(weak, class, nonatomic, nullable) GDTViewController *viewController;
++ (void)load {
+	[self addService:[GDTAppDelegateServiceVisionOS new]];
+}
 
 @end

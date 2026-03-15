@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  app_delegate_service.h                                                */
+/*  godot_compositor_services_renderer.h                                  */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,13 +30,18 @@
 
 #pragma once
 
-#import <UIKit/UIKit.h>
+#import "drivers/apple_embedded/godot_renderer.h"
+#import <CompositorServices/CompositorServices.h>
 
-@class GDTViewController;
+@interface GDTCompositorServicesRenderer : GDTRenderer
 
-@interface GDTAppDelegateService : NSObject <UIApplicationDelegate>
+- (instancetype)initWithLayerRenderer:(cp_layer_renderer_t)layer_renderer
+						 capabilities:(cp_layer_renderer_capabilities_t)capabilities;
 
-@property(strong, nonatomic, nullable) UIWindow *window;
-@property(weak, class, nonatomic, nullable) GDTViewController *viewController;
+- (void)updateXRInterface;
+
+- (void)startRenderLoop;
+- (void)renderFrame;
+- (void)worldRecentered;
 
 @end

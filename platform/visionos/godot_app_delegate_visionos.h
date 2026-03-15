@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  app_delegate_service.h                                                */
+/*  godot_app_delegate_visionos.h                                         */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,13 +30,8 @@
 
 #pragma once
 
-#import <UIKit/UIKit.h>
+#include "drivers/apple_embedded/godot_app_delegate.h"
 
-@class GDTViewController;
-
-@interface GDTAppDelegateService : NSObject <UIApplicationDelegate>
-
-@property(strong, nonatomic, nullable) UIWindow *window;
-@property(weak, class, nonatomic, nullable) GDTViewController *viewController;
+@interface GDTAppDelegateVisionOS : GDTApplicationDelegate
 
 @end

@@ -81,6 +81,68 @@ namespace MTL {
 
 MTL_CLASS(Texture)
 
+_FORCE_INLINE_ static Transform3D simd_to_transform3D(const simd_float4x4 &matrix) {
+	Transform3D transform(Vector3(matrix.columns[0].x, matrix.columns[0].y, matrix.columns[0].z),
+			Vector3(matrix.columns[1].x, matrix.columns[1].y, matrix.columns[1].z),
+			Vector3(matrix.columns[2].x, matrix.columns[2].y, matrix.columns[2].z),
+			Vector3(matrix.columns[3].x, matrix.columns[3].y, matrix.columns[3].z));
+	return transform;
+}
+
+_FORCE_INLINE_ static Projection simd_to_projection(const simd_float4x4 &matrix) {
+	Projection projection(Vector4(matrix.columns[0].x, matrix.columns[0].y, matrix.columns[0].z, matrix.columns[0].w),
+			Vector4(matrix.columns[1].x, matrix.columns[1].y, matrix.columns[1].z, matrix.columns[1].w),
+			Vector4(matrix.columns[2].x, matrix.columns[2].y, matrix.columns[2].z, matrix.columns[2].w),
+			Vector4(matrix.columns[3].x, matrix.columns[3].y, matrix.columns[3].z, matrix.columns[3].w));
+	return projection;
+}
+
+_FORCE_INLINE_ static Rect2i rect_from_mtl_viewport(MTLViewport viewport) {
+	return Rect2i(viewport.originX, viewport.originY, viewport.width, viewport.height);
+}
+
+_FORCE_INLINE_ static RD::TextureType texture_type_from_metal(MTLTextureType p_type) {
+	switch (p_type) {
+		case MTLTextureType1D:
+			return RD::TEXTURE_TYPE_1D;
+		case MTLTextureType2D:
+			return RD::TEXTURE_TYPE_2D;
+		case MTLTextureType3D:
+			return RD::TEXTURE_TYPE_3D;
+		case MTLTextureTypeCube:
+			return RD::TEXTURE_TYPE_CUBE;
+		case MTLTextureType1DArray:
+			return RD::TEXTURE_TYPE_1D_ARRAY;
+		case MTLTextureType2DArray:
+			return RD::TEXTURE_TYPE_2D_ARRAY;
+		case MTLTextureTypeCubeArray:
+			return RD::TEXTURE_TYPE_CUBE_ARRAY;
+		default:
+			return RD::TEXTURE_TYPE_MAX;
+	}
+}
+
+_FORCE_INLINE_ static RD::TextureSamples texture_samples_from_metal(int p_sample_count) {
+	switch (p_sample_count) {
+		case 1:
+			return RD::TEXTURE_SAMPLES_1;
+		case 2:
+			return RD::TEXTURE_SAMPLES_2;
+		case 4:
+			return RD::TEXTURE_SAMPLES_4;
+		case 8:
+			return RD::TEXTURE_SAMPLES_8;
+		case 16:
+			return RD::TEXTURE_SAMPLES_16;
+		case 32:
+			return RD::TEXTURE_SAMPLES_32;
+		case 64:
+			return RD::TEXTURE_SAMPLES_64;
+		default:
+			return RD::TEXTURE_SAMPLES_MAX;
+	}
+}
+
 } //namespace MTL
 
 enum ShaderStageUsage : uint32_t {
@@ -322,7 +384,17 @@ private:
 	_FORCE_INLINE_ id<MTLCommandBuffer> command_buffer() {
 		DEV_ASSERT(state_begin);
 		if (commandBuffer == nil) {
+#ifdef DEBUG_ENABLED
+			if (@available(macOS 11.0, iOS 14.0, tvOS 14.0, visionOS 1.0, *)) {
+				MTLCommandBufferDescriptor *descriptor = [MTLCommandBufferDescriptor new];
+				descriptor.errorOptions = MTLCommandBufferErrorOptionEncoderExecutionStatus;
+				commandBuffer = [queue commandBufferWithDescriptor:descriptor];
+			} else {
+				commandBuffer = queue.commandBuffer;
+			}
+#else
 			commandBuffer = queue.commandBuffer;
+#endif
 		}
 		return commandBuffer;
 	}
@@ -545,6 +617,10 @@ public:
 
 	_FORCE_INLINE_ id<MTLCommandBuffer> get_command_buffer() const {
 		return commandBuffer;
+	}
+
+	_FORCE_INLINE_ id<MTLCommandBuffer> ensure_command_buffer() {
+		return command_buffer();
 	}
 
 	void begin();
@@ -832,6 +908,7 @@ public:
 	struct {
 		MTLCullMode cull_mode = MTLCullModeNone;
 		MTLTriangleFillMode fill_mode = MTLTriangleFillModeFill;
+		bool depth_clip_mode_supported = true;
 		MTLDepthClipMode clip_mode = MTLDepthClipModeClip;
 		MTLWinding winding = MTLWindingClockwise;
 		MTLPrimitiveType render_primitive = MTLPrimitiveTypePoint;
@@ -882,7 +959,9 @@ public:
 		_FORCE_INLINE_ void apply(id<MTLRenderCommandEncoder> __unsafe_unretained p_enc) const {
 			[p_enc setCullMode:cull_mode];
 			[p_enc setTriangleFillMode:fill_mode];
-			[p_enc setDepthClipMode:clip_mode];
+			if (depth_clip_mode_supported) {
+				[p_enc setDepthClipMode:clip_mode];
+			}
 			[p_enc setFrontFacingWinding:winding];
 			depth_bias.apply(p_enc);
 			stencil.apply(p_enc);

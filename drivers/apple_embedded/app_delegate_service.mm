@@ -60,10 +60,14 @@ enum {
 	SESSION_CATEGORY_SOLO_AMBIENT
 };
 
-static GDTViewController *mainViewController = nil;
+static __weak GDTViewController *mainViewController = nil;
 
 + (GDTViewController *)viewController {
 	return mainViewController;
+}
+
++ (void)setViewController:(GDTViewController *)viewController {
+	mainViewController = viewController;
 }
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
@@ -130,6 +134,13 @@ static GDTViewController *mainViewController = nil;
 	}
 
 	[[AVAudioSession sharedInstance] setCategory:category withOptions:options error:nil];
+
+#if TARGET_OS_VISION && TARGET_OS_SIMULATOR
+	if (@available(visionOS 1.0, *)) {
+		// Simulator runtimes can fail room-congruence setup for spatial audio.
+		[[AVAudioSession sharedInstance] setIntendedSpatialExperience:AVAudioSessionSpatialExperienceBypassed options:nil error:nil];
+	}
+#endif
 
 	return YES;
 }

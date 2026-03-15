@@ -660,6 +660,9 @@ BitField<RDD::TextureUsageBits> RenderingDeviceDriverMetal::texture_get_usages_s
 	if (!flags::any(caps, kMTLFmtCapsRead)) {
 		supported.clear_flag(TEXTURE_USAGE_SAMPLING_BIT);
 	}
+	if (!flags::any(caps, kMTLFmtCapsWrite)) {
+		supported.clear_flag(TEXTURE_USAGE_STORAGE_BIT);
+	}
 	if (!flags::any(caps, kMTLFmtCapsAtomic)) {
 		supported.clear_flag(TEXTURE_USAGE_STORAGE_ATOMIC_BIT);
 	}
@@ -745,14 +748,22 @@ static const API_AVAILABLE(macos(11.0), ios(14.0), tvos(14.0)) MTLSamplerBorderC
 RDD::SamplerID RenderingDeviceDriverMetal::sampler_create(const SamplerState &p_state) {
 	MTLSamplerDescriptor *desc = [MTLSamplerDescriptor new];
 	desc.supportArgumentBuffers = YES;
+	const bool supports_sampler_border_color = device_properties->features.supportsSamplerBorderColor;
+
+	auto get_address_mode = [supports_sampler_border_color](SamplerRepeatMode p_repeat_mode) -> MTLSamplerAddressMode {
+		if (!supports_sampler_border_color && p_repeat_mode == SAMPLER_REPEAT_MODE_CLAMP_TO_BORDER) {
+			return MTLSamplerAddressModeClampToEdge;
+		}
+		return ADDRESS_MODES[p_repeat_mode];
+	};
 
 	desc.magFilter = p_state.mag_filter == SAMPLER_FILTER_LINEAR ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
 	desc.minFilter = p_state.min_filter == SAMPLER_FILTER_LINEAR ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
 	desc.mipFilter = p_state.mip_filter == SAMPLER_FILTER_LINEAR ? MTLSamplerMipFilterLinear : MTLSamplerMipFilterNearest;
 
-	desc.sAddressMode = ADDRESS_MODES[p_state.repeat_u];
-	desc.tAddressMode = ADDRESS_MODES[p_state.repeat_v];
-	desc.rAddressMode = ADDRESS_MODES[p_state.repeat_w];
+	desc.sAddressMode = get_address_mode(p_state.repeat_u);
+	desc.tAddressMode = get_address_mode(p_state.repeat_v);
+	desc.rAddressMode = get_address_mode(p_state.repeat_w);
 
 	if (p_state.use_anisotropy) {
 		desc.maxAnisotropy = p_state.anisotropy_max;
@@ -763,7 +774,9 @@ RDD::SamplerID RenderingDeviceDriverMetal::sampler_create(const SamplerState &p_
 	desc.lodMinClamp = p_state.min_lod;
 	desc.lodMaxClamp = p_state.max_lod;
 
-	desc.borderColor = SAMPLER_BORDER_COLORS[p_state.border_color];
+	if (supports_sampler_border_color) {
+		desc.borderColor = SAMPLER_BORDER_COLORS[p_state.border_color];
+	}
 
 	desc.normalizedCoordinates = !p_state.unnormalized_uvw;
 
@@ -2205,7 +2218,12 @@ RDD::PipelineID RenderingDeviceDriverMetal::render_pipeline_create(
 
 	// Rasterization.
 	desc.rasterizationEnabled = !p_rasterization_state.discard_primitives;
-	pipeline->raster_state.clip_mode = p_rasterization_state.enable_depth_clamp ? MTLDepthClipModeClamp : MTLDepthClipModeClip;
+#if TARGET_OS_SIMULATOR
+	pipeline->raster_state.depth_clip_mode_supported = false;
+#else
+	pipeline->raster_state.depth_clip_mode_supported = true;
+#endif
+	pipeline->raster_state.clip_mode = p_rasterization_state.enable_depth_clamp && pipeline->raster_state.depth_clip_mode_supported ? MTLDepthClipModeClamp : MTLDepthClipModeClip;
 	pipeline->raster_state.fill_mode = p_rasterization_state.wireframe ? MTLTriangleFillModeLines : MTLTriangleFillModeFill;
 
 	static const MTLCullMode CULL_MODE[3] = {
@@ -2758,6 +2776,13 @@ bool RenderingDeviceDriverMetal::has_feature(Features p_feature) {
 			return device_properties->features.supports_native_image_atomics;
 		case SUPPORTS_VULKAN_MEMORY_MODEL:
 			return true;
+		case SUPPORTS_RASTERIZATION_RATE_MAP: {
+			bool is_supported = [device supportsRasterizationRateMapWithLayerCount:1];
+#if defined(VISIONOS_ENABLED)
+			is_supported &= [device supportsRasterizationRateMapWithLayerCount:2];
+#endif
+			return is_supported;
+		}
 		default:
 			return false;
 	}
@@ -2948,7 +2973,9 @@ Error RenderingDeviceDriverMetal::initialize(uint32_t p_device_index, uint32_t p
 		print_verbose("- Metal multiview not supported");
 	}
 
-	// The Metal renderer requires Apple4 family. This is 2017 era A11 chips and newer.
+	// The Metal renderer requires Apple4 family on physical Apple Embedded devices.
+	// Simulator drivers may not expose Apple GPU families even when rendering is supported.
+#if !TARGET_OS_SIMULATOR
 	if (device_properties->features.highestFamily < MTLGPUFamilyApple4) {
 		String error_string = vformat("Your Apple GPU does not support the following features, which are required to use Metal-based renderers in Godot:\n\n");
 		if (!device_properties->features.imageCubeArray) {
@@ -2964,6 +2991,7 @@ Error RenderingDeviceDriverMetal::initialize(uint32_t p_device_index, uint32_t p
 
 		return ERR_CANT_CREATE;
 	}
+#endif
 
 	return OK;
 }

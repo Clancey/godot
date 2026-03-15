@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  app_delegate_service.h                                                */
+/*  godot_app_delegate_visionos.h                                         */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,13 +30,19 @@
 
 #pragma once
 
-#import <UIKit/UIKit.h>
+#import "drivers/apple_embedded/app_delegate_service.h"
 
-@class GDTViewController;
+#import <CompositorServices/CompositorServices.h>
 
-@interface GDTAppDelegateService : NSObject <UIApplicationDelegate>
+typedef NS_ENUM(NSInteger, GDTRenderMode) {
+	GDTRenderModeWindowed,
+	GDTRenderModeCompositorServices
+};
 
-@property(strong, nonatomic, nullable) UIWindow *window;
-@property(weak, class, nonatomic, nullable) GDTViewController *viewController;
+@interface GDTAppDelegateServiceVisionOS : GDTAppDelegateService
+
+@property(assign, class, nonatomic) GDTRenderMode renderMode;
+@property(weak, class, nonatomic, nullable) cp_layer_renderer_t layerRenderer;
+@property(strong, class, nonatomic, nullable) cp_layer_renderer_capabilities_t layerRendererCapabilities;
 
 @end

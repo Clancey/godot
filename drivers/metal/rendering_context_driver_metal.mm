@@ -32,6 +32,12 @@
 
 #import "rendering_device_driver_metal.h"
 
+#if defined(VISIONOS_ENABLED)
+#include "modules/visionos_xr/visionos_xr_interface.h"
+#import "platform/visionos/godot_app_delegate_service_visionos.h"
+#import <CompositorServices/CompositorServices.h>
+#endif
+
 @protocol MTLDeviceEx <MTLDevice>
 #if TARGET_OS_OSX && __MAC_OS_X_VERSION_MAX_ALLOWED < 130300
 - (void)setShouldMaximizeConcurrentCompilation:(BOOL)v;
@@ -49,7 +55,16 @@ Error RenderingContextDriverMetal::initialize() {
 		capture_available = true;
 	}
 
+#if TARGET_OS_VISION
+	GDTRenderMode app_delegate_render_mode = GDTAppDelegateServiceVisionOS.renderMode;
+	if (app_delegate_render_mode == GDTRenderModeCompositorServices) {
+		metal_device = cp_layer_renderer_get_device(GDTAppDelegateServiceVisionOS.layerRenderer);
+	} else {
+		metal_device = MTLCreateSystemDefaultDevice();
+	}
+#else
 	metal_device = MTLCreateSystemDefaultDevice();
+#endif
 #if TARGET_OS_OSX
 	if (@available(macOS 13.3, *)) {
 		[id<MTLDeviceEx>(metal_device) setShouldMaximizeConcurrentCompilation:YES];
@@ -103,6 +118,10 @@ public:
 
 	~SurfaceLayer() override {
 		layer = nil;
+	}
+
+	MTLPixelFormat get_pixel_format() const override final {
+		return MTLPixelFormatBGRA8Unorm;
 	}
 
 	Error resize(uint32_t p_desired_framebuffer_count) override final {
@@ -167,6 +186,7 @@ public:
 		if (count == 0) {
 			return;
 		}
+		id<MTLCommandBuffer> cmd_buffer = p_cmd_buffer->ensure_command_buffer();
 
 		// Release texture and drawable.
 		frame_buffers[front].unset_texture(0);
@@ -177,16 +197,79 @@ public:
 		front = (front + 1) % frame_buffers.size();
 
 		if (vsync_mode != DisplayServer::VSYNC_DISABLED) {
-			[p_cmd_buffer->get_command_buffer() presentDrawable:drawable afterMinimumDuration:present_minimum_duration];
+#if defined(VISIONOS_ENABLED)
+			[cmd_buffer presentDrawable:drawable];
+#else
+			[cmd_buffer presentDrawable:drawable
+					afterMinimumDuration:present_minimum_duration];
+#endif
 		} else {
-			[p_cmd_buffer->get_command_buffer() presentDrawable:drawable];
+			[cmd_buffer presentDrawable:drawable];
 		}
 	}
 };
 
+#if TARGET_OS_VISION
+class SurfaceCompositorServices : public RenderingContextDriverMetal::Surface {
+	MDFrameBuffer dummy_framebuffer;
+	id<MTLTexture> fallback_color_texture = nil;
+
+public:
+	SurfaceCompositorServices(id<MTLDevice> p_device) :
+			Surface(p_device) {
+		dummy_framebuffer.set_texture_count(1);
+
+		MTLTextureDescriptor *desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:get_pixel_format()
+																						width:1
+																					   height:1
+																					mipmapped:NO];
+		desc.storageMode = MTLStorageModePrivate;
+		desc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+		fallback_color_texture = [p_device newTextureWithDescriptor:desc];
+		dummy_framebuffer.set_texture(0, fallback_color_texture);
+		dummy_framebuffer.size = Size2i(1, 1);
+	}
+
+	~SurfaceCompositorServices() override {
+		fallback_color_texture = nil;
+	}
+
+	MTLPixelFormat get_pixel_format() const override final {
+		return MTLPixelFormatRGBA16Float;
+	}
+
+	Error resize(uint32_t p_desired_framebuffer_count) override final {
+		return OK;
+	}
+
+	RDD::FramebufferID acquire_next_frame_buffer() override final {
+		return RDD::FramebufferID(&dummy_framebuffer);
+	}
+
+	void present(MDCommandBuffer *p_cmd_buffer) override final {
+		Ref<VisionOSXRInterface> visionos_xr_interface = VisionOSXRInterface::find_interface();
+		if (!visionos_xr_interface.is_valid() || !visionos_xr_interface->is_initialized()) {
+			return;
+		}
+		visionos_xr_interface->encode_present(p_cmd_buffer);
+	}
+};
+#endif // TARGET_OS_VISION
+
 RenderingContextDriver::SurfaceID RenderingContextDriverMetal::surface_create(const void *p_platform_data) {
 	const WindowPlatformData *wpd = (const WindowPlatformData *)(p_platform_data);
-	Surface *surface = memnew(SurfaceLayer(wpd->layer, metal_device));
+
+	Surface *surface = nullptr;
+#if TARGET_OS_VISION
+	GDTRenderMode app_delegate_render_mode = GDTAppDelegateServiceVisionOS.renderMode;
+	if (app_delegate_render_mode == GDTRenderModeCompositorServices) {
+		surface = memnew(SurfaceCompositorServices(metal_device));
+	} else {
+		surface = memnew(SurfaceLayer(wpd->layer, metal_device));
+	}
+#else
+	surface = memnew(SurfaceLayer(wpd->layer, metal_device));
+#endif
 
 	return SurfaceID(surface);
 }
