@@ -31,68 +31,27 @@
 #include "register_types.h"
 
 #ifdef VISIONOS_ENABLED
+#include "shareplay_multiplayer_peer.h"
+#endif
 
-#include "core/config/engine.h"
-#include "visionos_anchor_tracker.h"
-#include "visionos_mesh_tracker.h"
-#include "visionos_plane_tracker.h"
-#include "visionos_spatial_anchor_capability.h"
-#include "visionos_xr_interface.h"
-
-Ref<VisionOSXRInterface> visionos_xr;
-VisionOSSpatialAnchorCapability *visionos_anchor_capability = nullptr;
-
-#endif // VISIONOS_ENABLED
-
-void initialize_visionos_xr_module(ModuleInitializationLevel p_level) {
+void initialize_visionos_shareplay_module(ModuleInitializationLevel p_level) {
 #ifdef VISIONOS_ENABLED
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
 
-	GDREGISTER_CLASS(VisionOSXRInterface);
-	GDREGISTER_CLASS(VisionOSPlaneTracker);
-	GDREGISTER_CLASS(VisionOSMeshTracker);
-	GDREGISTER_CLASS(VisionOSAnchorTracker);
-	GDREGISTER_CLASS(VisionOSSpatialAnchorCapability);
-
-	// Register anchor capability as a singleton (mirrors OpenXRSpatialAnchorCapability pattern).
-	visionos_anchor_capability = memnew(VisionOSSpatialAnchorCapability);
-	Engine::get_singleton()->add_singleton(Engine::Singleton("VisionOSSpatialAnchorCapability", visionos_anchor_capability));
-
-	if (XRServer::get_singleton()) {
-		visionos_xr.instantiate();
-		XRServer::get_singleton()->add_interface(visionos_xr);
-	}
+	GDREGISTER_CLASS(SharePlayMultiplayerPeer);
 #else
 	(void)p_level;
-#endif // VISIONOS_ENABLED
+#endif
 }
 
-void uninitialize_visionos_xr_module(ModuleInitializationLevel p_level) {
+void uninitialize_visionos_shareplay_module(ModuleInitializationLevel p_level) {
 #ifdef VISIONOS_ENABLED
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
-
-	if (visionos_xr.is_valid()) {
-		if (visionos_xr->is_initialized()) {
-			visionos_xr->uninitialize();
-		}
-
-		if (XRServer::get_singleton()) {
-			XRServer::get_singleton()->remove_interface(visionos_xr);
-		}
-
-		visionos_xr.unref();
-	}
-
-	if (visionos_anchor_capability != nullptr) {
-		Engine::get_singleton()->remove_singleton("VisionOSSpatialAnchorCapability");
-		memdelete(visionos_anchor_capability);
-		visionos_anchor_capability = nullptr;
-	}
 #else
 	(void)p_level;
-#endif // VISIONOS_ENABLED
+#endif
 }

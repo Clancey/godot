@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  register_types.mm                                                     */
+/*  visionos_spatial_anchor_capability.h                                  */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,71 +28,48 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "register_types.h"
+#pragma once
 
 #ifdef VISIONOS_ENABLED
 
-#include "core/config/engine.h"
+#include "core/object/ref_counted.h"
 #include "visionos_anchor_tracker.h"
-#include "visionos_mesh_tracker.h"
-#include "visionos_plane_tracker.h"
-#include "visionos_spatial_anchor_capability.h"
-#include "visionos_xr_interface.h"
 
-Ref<VisionOSXRInterface> visionos_xr;
-VisionOSSpatialAnchorCapability *visionos_anchor_capability = nullptr;
+class VisionOSSceneUnderstanding;
+
+class VisionOSSpatialAnchorCapability : public Object {
+	GDCLASS(VisionOSSpatialAnchorCapability, Object);
+
+public:
+	static VisionOSSpatialAnchorCapability *get_singleton();
+
+	VisionOSSpatialAnchorCapability();
+	~VisionOSSpatialAnchorCapability();
+
+	void set_scene_understanding(VisionOSSceneUnderstanding *p_scene_understanding);
+
+	// Mirrors OpenXRSpatialAnchorCapability API
+	bool is_spatial_anchor_supported();
+	bool is_spatial_persistence_supported();
+
+	Ref<VisionOSAnchorTracker> create_new_anchor(const Transform3D &p_transform);
+	void remove_anchor(Ref<VisionOSAnchorTracker> p_anchor_tracker);
+
+	// Persistence - visionOS world anchors are automatically persistent,
+	// so persist is a no-op that fires the callback, and unpersist removes the anchor.
+	void persist_anchor(Ref<VisionOSAnchorTracker> p_anchor_tracker, const Callable &p_user_callback = Callable());
+	void unpersist_anchor(Ref<VisionOSAnchorTracker> p_anchor_tracker, const Callable &p_user_callback = Callable());
+
+	// visionOS-specific: SharePlay shared anchors
+	bool is_sharing_available();
+	Ref<VisionOSAnchorTracker> create_shared_anchor(const Transform3D &p_transform);
+
+protected:
+	static void _bind_methods();
+
+private:
+	static VisionOSSpatialAnchorCapability *singleton;
+	VisionOSSceneUnderstanding *scene_understanding = nullptr;
+};
 
 #endif // VISIONOS_ENABLED
-
-void initialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-#ifdef VISIONOS_ENABLED
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
-
-	GDREGISTER_CLASS(VisionOSXRInterface);
-	GDREGISTER_CLASS(VisionOSPlaneTracker);
-	GDREGISTER_CLASS(VisionOSMeshTracker);
-	GDREGISTER_CLASS(VisionOSAnchorTracker);
-	GDREGISTER_CLASS(VisionOSSpatialAnchorCapability);
-
-	// Register anchor capability as a singleton (mirrors OpenXRSpatialAnchorCapability pattern).
-	visionos_anchor_capability = memnew(VisionOSSpatialAnchorCapability);
-	Engine::get_singleton()->add_singleton(Engine::Singleton("VisionOSSpatialAnchorCapability", visionos_anchor_capability));
-
-	if (XRServer::get_singleton()) {
-		visionos_xr.instantiate();
-		XRServer::get_singleton()->add_interface(visionos_xr);
-	}
-#else
-	(void)p_level;
-#endif // VISIONOS_ENABLED
-}
-
-void uninitialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-#ifdef VISIONOS_ENABLED
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
-
-	if (visionos_xr.is_valid()) {
-		if (visionos_xr->is_initialized()) {
-			visionos_xr->uninitialize();
-		}
-
-		if (XRServer::get_singleton()) {
-			XRServer::get_singleton()->remove_interface(visionos_xr);
-		}
-
-		visionos_xr.unref();
-	}
-
-	if (visionos_anchor_capability != nullptr) {
-		Engine::get_singleton()->remove_singleton("VisionOSSpatialAnchorCapability");
-		memdelete(visionos_anchor_capability);
-		visionos_anchor_capability = nullptr;
-	}
-#else
-	(void)p_level;
-#endif // VISIONOS_ENABLED
-}

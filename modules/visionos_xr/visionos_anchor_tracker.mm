@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  register_types.mm                                                     */
+/*  visionos_anchor_tracker.mm                                            */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,71 +28,55 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "register_types.h"
-
 #ifdef VISIONOS_ENABLED
 
-#include "core/config/engine.h"
 #include "visionos_anchor_tracker.h"
-#include "visionos_mesh_tracker.h"
-#include "visionos_plane_tracker.h"
-#include "visionos_spatial_anchor_capability.h"
-#include "visionos_xr_interface.h"
 
-Ref<VisionOSXRInterface> visionos_xr;
-VisionOSSpatialAnchorCapability *visionos_anchor_capability = nullptr;
+#include "servers/xr/xr_server.h"
 
-#endif // VISIONOS_ENABLED
+void VisionOSAnchorTracker::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_anchor_uuid", "uuid"), &VisionOSAnchorTracker::set_anchor_uuid);
+	ClassDB::bind_method(D_METHOD("get_anchor_uuid"), &VisionOSAnchorTracker::get_anchor_uuid);
+	ADD_PROPERTY(PropertyInfo(Variant::STRING, "anchor_uuid"), "set_anchor_uuid", "get_anchor_uuid");
 
-void initialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-#ifdef VISIONOS_ENABLED
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
+	ClassDB::bind_method(D_METHOD("get_anchor_tracked"), &VisionOSAnchorTracker::get_anchor_tracked);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "anchor_tracked"), "", "get_anchor_tracked");
 
-	GDREGISTER_CLASS(VisionOSXRInterface);
-	GDREGISTER_CLASS(VisionOSPlaneTracker);
-	GDREGISTER_CLASS(VisionOSMeshTracker);
-	GDREGISTER_CLASS(VisionOSAnchorTracker);
-	GDREGISTER_CLASS(VisionOSSpatialAnchorCapability);
+	ClassDB::bind_method(D_METHOD("get_shared_with_nearby_participants"), &VisionOSAnchorTracker::get_shared_with_nearby_participants);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shared_with_nearby_participants"), "", "get_shared_with_nearby_participants");
 
-	// Register anchor capability as a singleton (mirrors OpenXRSpatialAnchorCapability pattern).
-	visionos_anchor_capability = memnew(VisionOSSpatialAnchorCapability);
-	Engine::get_singleton()->add_singleton(Engine::Singleton("VisionOSSpatialAnchorCapability", visionos_anchor_capability));
-
-	if (XRServer::get_singleton()) {
-		visionos_xr.instantiate();
-		XRServer::get_singleton()->add_interface(visionos_xr);
-	}
-#else
-	(void)p_level;
-#endif // VISIONOS_ENABLED
+	ADD_SIGNAL(MethodInfo("tracking_state_changed", PropertyInfo(Variant::BOOL, "is_tracked")));
 }
 
-void uninitialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-#ifdef VISIONOS_ENABLED
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
-
-	if (visionos_xr.is_valid()) {
-		if (visionos_xr->is_initialized()) {
-			visionos_xr->uninitialize();
-		}
-
-		if (XRServer::get_singleton()) {
-			XRServer::get_singleton()->remove_interface(visionos_xr);
-		}
-
-		visionos_xr.unref();
-	}
-
-	if (visionos_anchor_capability != nullptr) {
-		Engine::get_singleton()->remove_singleton("VisionOSSpatialAnchorCapability");
-		memdelete(visionos_anchor_capability);
-		visionos_anchor_capability = nullptr;
-	}
-#else
-	(void)p_level;
-#endif // VISIONOS_ENABLED
+VisionOSAnchorTracker::VisionOSAnchorTracker() {
+	set_tracker_type(XRServer::TRACKER_ANCHOR);
 }
+
+void VisionOSAnchorTracker::set_anchor_uuid(const String &p_uuid) {
+	uuid = p_uuid;
+}
+
+String VisionOSAnchorTracker::get_anchor_uuid() const {
+	return uuid;
+}
+
+void VisionOSAnchorTracker::set_anchor_tracked(bool p_tracked) {
+	if (tracked != p_tracked) {
+		tracked = p_tracked;
+		emit_signal(SNAME("tracking_state_changed"), tracked);
+	}
+}
+
+bool VisionOSAnchorTracker::get_anchor_tracked() const {
+	return tracked;
+}
+
+void VisionOSAnchorTracker::set_shared_with_nearby_participants(bool p_shared) {
+	shared_with_nearby_participants = p_shared;
+}
+
+bool VisionOSAnchorTracker::get_shared_with_nearby_participants() const {
+	return shared_with_nearby_participants;
+}
+
+#endif // VISIONOS_ENABLED

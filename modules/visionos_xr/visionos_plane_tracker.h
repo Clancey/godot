@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  register_types.mm                                                     */
+/*  visionos_plane_tracker.h                                              */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,71 +28,82 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "register_types.h"
+#pragma once
 
 #ifdef VISIONOS_ENABLED
 
-#include "core/config/engine.h"
-#include "visionos_anchor_tracker.h"
-#include "visionos_mesh_tracker.h"
-#include "visionos_plane_tracker.h"
-#include "visionos_spatial_anchor_capability.h"
-#include "visionos_xr_interface.h"
+#include "scene/resources/3d/shape_3d.h"
+#include "scene/resources/mesh.h"
+#include "servers/xr/xr_positional_tracker.h"
 
-Ref<VisionOSXRInterface> visionos_xr;
-VisionOSSpatialAnchorCapability *visionos_anchor_capability = nullptr;
+class VisionOSPlaneTracker : public XRPositionalTracker {
+	GDCLASS(VisionOSPlaneTracker, XRPositionalTracker);
 
-#endif // VISIONOS_ENABLED
+public:
+	enum PlaneAlignment {
+		PLANE_ALIGNMENT_HORIZONTAL_UPWARD = 0,
+		PLANE_ALIGNMENT_HORIZONTAL_DOWNWARD = 1,
+		PLANE_ALIGNMENT_VERTICAL = 2,
+		PLANE_ALIGNMENT_ARBITRARY = 3,
+	};
 
-void initialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-#ifdef VISIONOS_ENABLED
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
+	VisionOSPlaneTracker();
 
-	GDREGISTER_CLASS(VisionOSXRInterface);
-	GDREGISTER_CLASS(VisionOSPlaneTracker);
-	GDREGISTER_CLASS(VisionOSMeshTracker);
-	GDREGISTER_CLASS(VisionOSAnchorTracker);
-	GDREGISTER_CLASS(VisionOSSpatialAnchorCapability);
+	void set_bounds_size(const Vector2 &p_bounds_size);
+	Vector2 get_bounds_size() const;
 
-	// Register anchor capability as a singleton (mirrors OpenXRSpatialAnchorCapability pattern).
-	visionos_anchor_capability = memnew(VisionOSSpatialAnchorCapability);
-	Engine::get_singleton()->add_singleton(Engine::Singleton("VisionOSSpatialAnchorCapability", visionos_anchor_capability));
+	void set_plane_alignment(PlaneAlignment p_plane_alignment);
+	PlaneAlignment get_plane_alignment() const;
 
-	if (XRServer::get_singleton()) {
-		visionos_xr.instantiate();
-		XRServer::get_singleton()->add_interface(visionos_xr);
-	}
-#else
-	(void)p_level;
-#endif // VISIONOS_ENABLED
-}
+	void set_plane_label(const String &p_plane_label);
+	String get_plane_label() const;
 
-void uninitialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-#ifdef VISIONOS_ENABLED
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
+	void set_mesh_data(const Transform3D &p_origin, const PackedVector2Array &p_vertices, const PackedInt32Array &p_indices = PackedInt32Array());
+	void clear_mesh_data();
 
-	if (visionos_xr.is_valid()) {
-		if (visionos_xr->is_initialized()) {
-			visionos_xr->uninitialize();
+	Transform3D get_mesh_offset() const;
+	Ref<Mesh> get_mesh();
+	Ref<Shape3D> get_shape(real_t p_thickness = 0.01);
+
+protected:
+	static void _bind_methods();
+
+private:
+	Vector2 bounds_size;
+	PlaneAlignment plane_alignment = PLANE_ALIGNMENT_HORIZONTAL_UPWARD;
+	String plane_label;
+
+	struct MeshData {
+		bool has_mesh_data = false;
+		Transform3D origin;
+		PackedVector2Array vertices;
+		PackedInt32Array indices;
+
+		Ref<Mesh> mesh;
+		Ref<Shape3D> shape3d;
+	} mesh;
+
+	struct Edge {
+		int32_t a;
+		int32_t b;
+		static _FORCE_INLINE_ uint32_t hash(const Edge &p_edge) {
+			uint32_t h = hash_murmur3_one_32(p_edge.a);
+			return hash_murmur3_one_32(p_edge.b, h);
+		}
+		bool operator==(const Edge &p_edge) const {
+			return (a == p_edge.a && b == p_edge.b);
 		}
 
-		if (XRServer::get_singleton()) {
-			XRServer::get_singleton()->remove_interface(visionos_xr);
+		Edge(int32_t p_a = 0, int32_t p_b = 0) {
+			a = p_a;
+			b = p_b;
+			if (a < b) {
+				SWAP(a, b);
+			}
 		}
+	};
+};
 
-		visionos_xr.unref();
-	}
+VARIANT_ENUM_CAST(VisionOSPlaneTracker::PlaneAlignment);
 
-	if (visionos_anchor_capability != nullptr) {
-		Engine::get_singleton()->remove_singleton("VisionOSSpatialAnchorCapability");
-		memdelete(visionos_anchor_capability);
-		visionos_anchor_capability = nullptr;
-	}
-#else
-	(void)p_level;
 #endif // VISIONOS_ENABLED
-}

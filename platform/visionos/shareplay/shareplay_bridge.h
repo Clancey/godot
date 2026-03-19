@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  register_types.mm                                                     */
+/*  shareplay_bridge.h                                                    */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,71 +28,42 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "register_types.h"
+#pragma once
 
-#ifdef VISIONOS_ENABLED
+/// C-callable bridge to the Swift SharePlaySessionManager.
+/// This avoids the need for the generated -Swift.h header in the Scons build.
 
-#include "core/config/engine.h"
-#include "visionos_anchor_tracker.h"
-#include "visionos_mesh_tracker.h"
-#include "visionos_plane_tracker.h"
-#include "visionos_spatial_anchor_capability.h"
-#include "visionos_xr_interface.h"
+#import <Foundation/Foundation.h>
 
-Ref<VisionOSXRInterface> visionos_xr;
-VisionOSSpatialAnchorCapability *visionos_anchor_capability = nullptr;
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-#endif // VISIONOS_ENABLED
+// Session lifecycle
+void godot_shareplay_set_activity_title(const char *title);
+void godot_shareplay_start_activity(void);
+void godot_shareplay_end_activity(void);
 
-void initialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-#ifdef VISIONOS_ENABLED
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
+// State queries
+bool godot_shareplay_is_session_active(void);
+const char *godot_shareplay_get_local_participant_id(void);
+int godot_shareplay_get_participant_count(void);
 
-	GDREGISTER_CLASS(VisionOSXRInterface);
-	GDREGISTER_CLASS(VisionOSPlaneTracker);
-	GDREGISTER_CLASS(VisionOSMeshTracker);
-	GDREGISTER_CLASS(VisionOSAnchorTracker);
-	GDREGISTER_CLASS(VisionOSSpatialAnchorCapability);
+// Messaging
+void godot_shareplay_send_message(const uint8_t *data, int length, const char *recipient_id);
+// recipient_id == NULL means broadcast
 
-	// Register anchor capability as a singleton (mirrors OpenXRSpatialAnchorCapability pattern).
-	visionos_anchor_capability = memnew(VisionOSSpatialAnchorCapability);
-	Engine::get_singleton()->add_singleton(Engine::Singleton("VisionOSSpatialAnchorCapability", visionos_anchor_capability));
+// Callback registration (C function pointers for thread safety)
+typedef void (*godot_shareplay_message_callback_t)(const uint8_t *data, int length, const char *sender_id, void *userdata);
+typedef void (*godot_shareplay_participant_callback_t)(const char *participant_id, void *userdata);
+typedef void (*godot_shareplay_session_callback_t)(void *userdata);
 
-	if (XRServer::get_singleton()) {
-		visionos_xr.instantiate();
-		XRServer::get_singleton()->add_interface(visionos_xr);
-	}
-#else
-	(void)p_level;
-#endif // VISIONOS_ENABLED
+void godot_shareplay_set_message_callback(godot_shareplay_message_callback_t callback, void *userdata);
+void godot_shareplay_set_participant_joined_callback(godot_shareplay_participant_callback_t callback, void *userdata);
+void godot_shareplay_set_participant_left_callback(godot_shareplay_participant_callback_t callback, void *userdata);
+void godot_shareplay_set_session_started_callback(godot_shareplay_session_callback_t callback, void *userdata);
+void godot_shareplay_set_session_ended_callback(godot_shareplay_session_callback_t callback, void *userdata);
+
+#ifdef __cplusplus
 }
-
-void uninitialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-#ifdef VISIONOS_ENABLED
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
-
-	if (visionos_xr.is_valid()) {
-		if (visionos_xr->is_initialized()) {
-			visionos_xr->uninitialize();
-		}
-
-		if (XRServer::get_singleton()) {
-			XRServer::get_singleton()->remove_interface(visionos_xr);
-		}
-
-		visionos_xr.unref();
-	}
-
-	if (visionos_anchor_capability != nullptr) {
-		Engine::get_singleton()->remove_singleton("VisionOSSpatialAnchorCapability");
-		memdelete(visionos_anchor_capability);
-		visionos_anchor_capability = nullptr;
-	}
-#else
-	(void)p_level;
-#endif // VISIONOS_ENABLED
-}
+#endif

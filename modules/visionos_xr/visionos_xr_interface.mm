@@ -32,6 +32,9 @@
 
 #include "visionos_xr_interface.h"
 
+#include "visionos_spatial_anchor_capability.h"
+
+#include "core/config/project_settings.h"
 #include "core/input/input.h"
 #include "core/math/math_funcs.h"
 #include "core/os/os.h"
@@ -415,6 +418,16 @@ void VisionOSXRInterface::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "eye_height", PROPERTY_HINT_RANGE, "0.0,3.0,0.01"), "set_eye_height", "get_eye_height");
 
+	// Scene understanding
+	ClassDB::bind_method(D_METHOD("create_spatial_anchor", "transform", "shared"), &VisionOSXRInterface::create_spatial_anchor, DEFVAL(false));
+	ClassDB::bind_method(D_METHOD("remove_spatial_anchor", "anchor"), &VisionOSXRInterface::remove_spatial_anchor);
+	ClassDB::bind_method(D_METHOD("is_anchor_sharing_available"), &VisionOSXRInterface::is_anchor_sharing_available);
+
+	// Project settings for scene understanding
+	GLOBAL_DEF("xr/visionos/scene_understanding/enable_plane_detection", false);
+	GLOBAL_DEF("xr/visionos/scene_understanding/enable_scene_reconstruction", false);
+	GLOBAL_DEF("xr/visionos/scene_understanding/enable_world_anchors", false);
+
 	// Signals
 	for (int i = 0; i < VISIONOS_XR_SIGNAL_MAX; i++) {
 		ADD_SIGNAL(MethodInfo(get_signal_name((SignalEnum)i)));
@@ -428,6 +441,18 @@ VisionOSXRInterface::~VisionOSXRInterface() {
 	if (is_initialized()) {
 		uninitialize();
 	};
+}
+
+Ref<VisionOSAnchorTracker> VisionOSXRInterface::create_spatial_anchor(const Transform3D &p_transform, bool p_shared) {
+	return scene_understanding.create_anchor(p_transform, p_shared);
+}
+
+void VisionOSXRInterface::remove_spatial_anchor(Ref<VisionOSAnchorTracker> p_anchor) {
+	scene_understanding.remove_anchor(p_anchor);
+}
+
+bool VisionOSXRInterface::is_anchor_sharing_available() const {
+	return scene_understanding.is_anchor_sharing_available();
 }
 
 float VisionOSXRInterface::get_tracking_floor_offset() const {
@@ -665,8 +690,11 @@ void VisionOSXRInterface::configure_arkit_session_authorization_and_state_handle
 #endif
 
 	// Request world sensing authorization if the plist key is present.
+	// Required for plane detection, scene reconstruction, and world anchors.
 	if (info_plist[@"NSWorldSensingUsageDescription"] != nil) {
 		requested_authorizations = ar_authorization_type_t(requested_authorizations | ar_authorization_type_world_sensing);
+	} else if (scene_understanding.is_plane_detection_enabled() || scene_understanding.is_scene_reconstruction_enabled() || scene_understanding.is_world_anchors_enabled()) {
+		WARN_PRINT("visionOS: NSWorldSensingUsageDescription missing from Info.plist, scene understanding features will not work.");
 	}
 
 	run_arkit_session_with_active_providers();
@@ -707,6 +735,9 @@ void VisionOSXRInterface::run_arkit_session_with_active_providers() {
 	(void)include_hand_provider;
 	(void)include_accessory_provider;
 	(void)configured_accessory_count;
+
+	// Add scene understanding providers (plane detection, scene reconstruction).
+	scene_understanding.add_providers_to(data_providers);
 
 	ar_session_run(ar_session, data_providers);
 }
@@ -1738,6 +1769,14 @@ bool VisionOSXRInterface::initialize() {
 	}
 
 	initialize_accessory_tracking_provider();
+	scene_understanding.initialize(ar_session, world_tracking_provider);
+
+	// Connect the anchor capability singleton to our scene understanding instance.
+	VisionOSSpatialAnchorCapability *anchor_cap = VisionOSSpatialAnchorCapability::get_singleton();
+	if (anchor_cap != nullptr) {
+		anchor_cap->set_scene_understanding(&scene_understanding);
+	}
+
 	configure_arkit_session_authorization_and_state_handlers();
 	accessory_tracking_needs_session_refresh = false;
 
@@ -1820,6 +1859,13 @@ void VisionOSXRInterface::uninitialize() {
 	}
 
 	uninitialize_accessory_tracking_provider();
+	scene_understanding.uninitialize();
+
+	// Disconnect anchor capability from scene understanding.
+	VisionOSSpatialAnchorCapability *anchor_cap = VisionOSSpatialAnchorCapability::get_singleton();
+	if (anchor_cap != nullptr) {
+		anchor_cap->set_scene_understanding(nullptr);
+	}
 
 	hand_tracking_supported = false;
 	hand_tracking_active = false;
@@ -2028,6 +2074,9 @@ void VisionOSXRInterface::process() {
 	update_accessory_tracking_session();
 	update_spatial_controller_states_from_arkit(trackable_anchor_time);
 	apply_hand_states_to_trackers();
+
+	// Process scene understanding updates (plane detection, mesh scanning, world anchors).
+	scene_understanding.process();
 
 	rendering_server->call_on_render_thread(callable_mp(&rt, &RenderThread::set_current_frame).bind((uint64_t)current_frame));
 	rendering_server->call_on_render_thread(callable_mp(&rt, &RenderThread::start_frame_update));

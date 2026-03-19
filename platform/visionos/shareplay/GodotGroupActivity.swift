@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  register_types.mm                                                     */
+/*  GodotGroupActivity.swift                                              */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,71 +28,24 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "register_types.h"
+import Foundation
+import GroupActivities
 
-#ifdef VISIONOS_ENABLED
+/// The GroupActivity type used by Godot for SharePlay shared spaces.
+struct GodotGroupActivity: GroupActivity {
+    static let activityIdentifier = "org.godotengine.shareplay.shared-space"
 
-#include "core/config/engine.h"
-#include "visionos_anchor_tracker.h"
-#include "visionos_mesh_tracker.h"
-#include "visionos_plane_tracker.h"
-#include "visionos_spatial_anchor_capability.h"
-#include "visionos_xr_interface.h"
-
-Ref<VisionOSXRInterface> visionos_xr;
-VisionOSSpatialAnchorCapability *visionos_anchor_capability = nullptr;
-
-#endif // VISIONOS_ENABLED
-
-void initialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-#ifdef VISIONOS_ENABLED
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
-
-	GDREGISTER_CLASS(VisionOSXRInterface);
-	GDREGISTER_CLASS(VisionOSPlaneTracker);
-	GDREGISTER_CLASS(VisionOSMeshTracker);
-	GDREGISTER_CLASS(VisionOSAnchorTracker);
-	GDREGISTER_CLASS(VisionOSSpatialAnchorCapability);
-
-	// Register anchor capability as a singleton (mirrors OpenXRSpatialAnchorCapability pattern).
-	visionos_anchor_capability = memnew(VisionOSSpatialAnchorCapability);
-	Engine::get_singleton()->add_singleton(Engine::Singleton("VisionOSSpatialAnchorCapability", visionos_anchor_capability));
-
-	if (XRServer::get_singleton()) {
-		visionos_xr.instantiate();
-		XRServer::get_singleton()->add_interface(visionos_xr);
-	}
-#else
-	(void)p_level;
-#endif // VISIONOS_ENABLED
+    var metadata: GroupActivityMetadata {
+        var meta = GroupActivityMetadata()
+        meta.type = .generic
+        meta.title = SharePlaySessionManager.shared.activityTitle
+        meta.supportsContinuationOnTV = false
+        return meta
+    }
 }
 
-void uninitialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-#ifdef VISIONOS_ENABLED
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
-
-	if (visionos_xr.is_valid()) {
-		if (visionos_xr->is_initialized()) {
-			visionos_xr->uninitialize();
-		}
-
-		if (XRServer::get_singleton()) {
-			XRServer::get_singleton()->remove_interface(visionos_xr);
-		}
-
-		visionos_xr.unref();
-	}
-
-	if (visionos_anchor_capability != nullptr) {
-		Engine::get_singleton()->remove_singleton("VisionOSSpatialAnchorCapability");
-		memdelete(visionos_anchor_capability);
-		visionos_anchor_capability = nullptr;
-	}
-#else
-	(void)p_level;
-#endif // VISIONOS_ENABLED
+/// A simple wrapper for raw data messages sent between participants.
+struct GodotSharePlayMessage: Codable, Sendable {
+    let senderID: String
+    let payload: Data
 }

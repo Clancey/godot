@@ -43,6 +43,7 @@
 #include "servers/xr/xr_interface.h"
 #include "servers/xr/xr_positional_tracker.h"
 #include "servers/xr/xr_vrs.h"
+#include "visionos_scene_understanding.h"
 
 #import <ARKit/ARKit.h>
 #import <CompositorServices/CompositorServices.h>
@@ -230,6 +231,9 @@ private:
 	SpatialControllerState accessory_tracking_stream_states[HAND_INDEX_MAX];
 	uint64_t accessory_tracking_stream_state_timestamp_msec[HAND_INDEX_MAX] = { 0, 0 };
 
+	// Scene understanding (plane detection, mesh scanning, world anchors)
+	VisionOSSceneUnderstanding scene_understanding;
+
 	static void _bind_methods();
 	static const String name;
 	static StringName get_signal_name(SignalEnum p_signal);
@@ -302,6 +306,11 @@ public:
 
 	void set_eye_height(float p_eye_height);
 	float get_eye_height() const;
+
+	// Scene understanding public API
+	Ref<VisionOSAnchorTracker> create_spatial_anchor(const Transform3D &p_transform, bool p_shared = false);
+	void remove_spatial_anchor(Ref<VisionOSAnchorTracker> p_anchor);
+	bool is_anchor_sharing_available() const;
 
 	virtual void process() override;
 
