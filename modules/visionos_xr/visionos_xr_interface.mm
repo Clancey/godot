@@ -389,6 +389,15 @@ void VisionOSXRInterface::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "eye_height", PROPERTY_HINT_RANGE, "0.0,3.0,0.01"), "set_eye_height", "get_eye_height");
 
+	ClassDB::bind_method(D_METHOD("set_upper_limb_visibility", "visibility"), &VisionOSXRInterface::set_upper_limb_visibility);
+	ClassDB::bind_method(D_METHOD("get_upper_limb_visibility"), &VisionOSXRInterface::get_upper_limb_visibility);
+
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "upper_limb_visibility", PROPERTY_HINT_ENUM, "Automatic,Visible,Hidden"), "set_upper_limb_visibility", "get_upper_limb_visibility");
+
+	BIND_ENUM_CONSTANT(UPPER_LIMB_VISIBILITY_AUTOMATIC);
+	BIND_ENUM_CONSTANT(UPPER_LIMB_VISIBILITY_VISIBLE);
+	BIND_ENUM_CONSTANT(UPPER_LIMB_VISIBILITY_HIDDEN);
+
 	// Signals
 	for (int i = 0; i < VISIONOS_XR_SIGNAL_MAX; i++) {
 		ADD_SIGNAL(MethodInfo(get_signal_name((SignalEnum)i)));
@@ -1916,6 +1925,32 @@ void VisionOSXRInterface::set_eye_height(float p_eye_height) {
 
 float VisionOSXRInterface::get_eye_height() const {
 	return eye_height;
+}
+
+void VisionOSXRInterface::set_upper_limb_visibility(UpperLimbVisibility p_visibility) {
+	upper_limb_visibility = p_visibility;
+
+	GDTUpperLimbVisibility mapped;
+	switch (p_visibility) {
+		case UPPER_LIMB_VISIBILITY_VISIBLE:
+			mapped = GDTUpperLimbVisibilityVisible;
+			break;
+		case UPPER_LIMB_VISIBILITY_HIDDEN:
+			mapped = GDTUpperLimbVisibilityHidden;
+			break;
+		case UPPER_LIMB_VISIBILITY_AUTOMATIC:
+		default:
+			mapped = GDTUpperLimbVisibilityAutomatic;
+			break;
+	}
+
+	// The SwiftUI ImmersiveSpace observes this app-delegate property (setter posts a
+	// notification) and re-applies `.upperLimbVisibility` live — no relaunch.
+	GDTAppDelegateServiceVisionOS.upperLimbVisibility = mapped;
+}
+
+VisionOSXRInterface::UpperLimbVisibility VisionOSXRInterface::get_upper_limb_visibility() const {
+	return upper_limb_visibility;
 }
 
 void VisionOSXRInterface::set_head_pose_from_arkit() {

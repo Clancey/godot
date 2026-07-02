@@ -39,10 +39,24 @@ typedef NS_ENUM(NSInteger, GDTRenderMode) {
 	GDTRenderModeCompositorServices
 };
 
+// Runtime state for the user's real arms (upper-limb passthrough). `Unset` means the app
+// has not chosen at runtime, so the static Info.plist / export default applies.
+typedef NS_ENUM(NSInteger, GDTUpperLimbVisibility) {
+	GDTUpperLimbVisibilityUnset = -1,
+	GDTUpperLimbVisibilityAutomatic = 0,
+	GDTUpperLimbVisibilityVisible = 1,
+	GDTUpperLimbVisibilityHidden = 2,
+};
+
+// Posted (on the main thread) whenever `upperLimbVisibility` changes, so the SwiftUI
+// ImmersiveSpace can re-apply `.upperLimbVisibility` without a relaunch.
+extern NSString *_Nonnull const GDTUpperLimbVisibilityDidChangeNotification;
+
 @interface GDTAppDelegateServiceVisionOS : GDTAppDelegateService
 
 @property(assign, class, nonatomic) GDTRenderMode renderMode;
 @property(weak, class, nonatomic, nullable) cp_layer_renderer_t layerRenderer;
 @property(strong, class, nonatomic, nullable) cp_layer_renderer_capabilities_t layerRendererCapabilities;
+@property(assign, class, nonatomic) GDTUpperLimbVisibility upperLimbVisibility;
 
 @end

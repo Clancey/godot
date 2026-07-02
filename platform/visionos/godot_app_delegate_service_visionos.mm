@@ -30,9 +30,12 @@
 
 #import "godot_app_delegate_service_visionos.h"
 
+NSString *_Nonnull const GDTUpperLimbVisibilityDidChangeNotification = @"GDTUpperLimbVisibilityDidChangeNotification";
+
 static GDTRenderMode _renderMode = GDTRenderModeWindowed;
 static __weak cp_layer_renderer_t _layerRenderer = nil;
 static __strong cp_layer_renderer_capabilities_t _layerRendererCapabilities = nil;
+static GDTUpperLimbVisibility _upperLimbVisibility = GDTUpperLimbVisibilityUnset;
 
 @implementation GDTAppDelegateServiceVisionOS
 
@@ -74,6 +77,18 @@ static __strong cp_layer_renderer_capabilities_t _layerRendererCapabilities = ni
 		return;
 	}
 	_layerRendererCapabilities = layerRendererCapabilities;
+}
+
++ (GDTUpperLimbVisibility)upperLimbVisibility {
+	return _upperLimbVisibility;
+}
+
++ (void)setUpperLimbVisibility:(GDTUpperLimbVisibility)upperLimbVisibility {
+	_upperLimbVisibility = upperLimbVisibility;
+	// Notify on the main thread; SwiftUI state must be updated on the main actor.
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[[NSNotificationCenter defaultCenter] postNotificationName:GDTUpperLimbVisibilityDidChangeNotification object:nil];
+	});
 }
 
 @end
