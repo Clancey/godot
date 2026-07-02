@@ -66,6 +66,15 @@ public:
 		VISIONOS_XR_SIGNAL_MAX,
 	};
 
+	// Controls whether the user's real arms (upper-limb passthrough) are composited
+	// over the immersive scene. Maps to SwiftUI's `.upperLimbVisibility`. Distinct from
+	// any virtual hand/controller mesh the app draws itself.
+	enum UpperLimbVisibility {
+		UPPER_LIMB_VISIBILITY_AUTOMATIC,
+		UPPER_LIMB_VISIBILITY_VISIBLE,
+		UPPER_LIMB_VISIBILITY_HIDDEN,
+	};
+
 private:
 	enum HandIndex {
 		HAND_INDEX_LEFT = 0,
@@ -129,6 +138,7 @@ private:
 	bool initialized = false;
 	XRInterface::TrackingStatus tracking_state;
 	XRInterface::EnvironmentBlendMode environment_blend_mode = XRInterface::XR_ENV_BLEND_MODE_ALPHA_BLEND;
+	UpperLimbVisibility upper_limb_visibility = UPPER_LIMB_VISIBILITY_AUTOMATIC;
 	XRInterface::PlayAreaMode play_area_mode = XRInterface::XR_PLAY_AREA_ROOMSCALE;
 	float eye_height = 1.7f;
 	float tracking_reference_head_height = 0.0f;
@@ -300,6 +310,9 @@ public:
 	void set_eye_height(float p_eye_height);
 	float get_eye_height() const;
 
+	void set_upper_limb_visibility(UpperLimbVisibility p_visibility);
+	UpperLimbVisibility get_upper_limb_visibility() const;
+
 	virtual void process() override;
 
 	// Render thread methods
@@ -344,5 +357,7 @@ public:
 		return rt.get_vrs_texture();
 	}
 };
+
+VARIANT_ENUM_CAST(VisionOSXRInterface::UpperLimbVisibility);
 
 #endif

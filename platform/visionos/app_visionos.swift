@@ -28,6 +28,7 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+import Combine
 import SwiftUI
 @preconcurrency import CompositorServices
 
@@ -90,6 +91,32 @@ struct ContentStageConfiguration: CompositorLayerConfiguration {
 
 extension GDTCompositorServicesRenderer: @unchecked Sendable {}
 
+/// Bridges the engine-driven upper-limb (real-arm) visibility into SwiftUI. The engine
+/// posts `GDTUpperLimbVisibilityDidChangeNotification` when GDScript calls
+/// `VisionOSXRInterface.set_upper_limb_visibility(...)`; reading `visibility` in the Scene
+/// body registers an Observation dependency so `.upperLimbVisibility` re-applies live — no
+/// relaunch. (The immersive content is `CompositorContent`, not a View, so a View
+/// `.task`/`.onReceive` can't be attached there — hence this model.)
+@MainActor
+final class UpperLimbVisibilityModel: ObservableObject {
+	static let shared = UpperLimbVisibilityModel()
+
+	@Published var visibility: Visibility = CompositorServicesImmersiveSpace.resolveUpperLimbVisibility()
+
+	private init() {
+		NotificationCenter.default.addObserver(
+			forName: NSNotification.Name(GDTUpperLimbVisibilityDidChangeNotification),
+			object: nil,
+			queue: .main
+		) { [weak self] _ in
+			// Posted on the main queue, so we are already on the main thread/actor here.
+			MainActor.assumeIsolated {
+				self?.visibility = CompositorServicesImmersiveSpace.resolveUpperLimbVisibility()
+			}
+		}
+	}
+}
+
 struct CompositorServicesImmersiveSpace: Scene {
 
 	fileprivate static var initialImmersionStyle: ImmersionStyle {
@@ -133,6 +160,24 @@ struct CompositorServicesImmersiveSpace: Scene {
 		return .automatic
 	}
 
+	/// Effective upper-limb visibility: the runtime value set from GDScript via
+	/// `VisionOSXRInterface.set_upper_limb_visibility(...)` if the app has chosen one,
+	/// otherwise the static `GodotUpperLimbVisibility` Info.plist / export default.
+	fileprivate static func resolveUpperLimbVisibility() -> Visibility {
+		switch GDTAppDelegateServiceVisionOS.upperLimbVisibility {
+			case .visible:
+				return .visible
+			case .hidden:
+				return .hidden
+			case .automatic:
+				return .automatic
+			case .unset:
+				return preferredUpperLimbVisibility
+			@unknown default:
+				return preferredUpperLimbVisibility
+		}
+	}
+
 	fileprivate static var preferredPersistentSystemOverlays: Visibility {
 		if let overlaysOverride = Bundle.main.infoDictionary?["GodotPersistentSystemOverlays"] as? String {
 			switch overlaysOverride.lowercased() {
@@ -149,8 +194,13 @@ struct CompositorServicesImmersiveSpace: Scene {
 		return .automatic
 	}
 
-	@State var renderer: GDTCompositorServicesRenderer!
-	@State var didSetUpRenderer: Bool = false
+	@State private var renderer: GDTCompositorServicesRenderer!
+	@State private var didSetUpRenderer: Bool = false
+
+	// Live runtime state for the real Persona arms, driven from GDScript via
+	// VisionOSXRInterface.set_upper_limb_visibility(...). Reading limbModel.visibility
+	// below re-applies .upperLimbVisibility without a relaunch.
+	@StateObject private var limbModel = UpperLimbVisibilityModel.shared
 
 	var body: some Scene {
 		ImmersiveSpace(id: "ImmersiveSpace") {
@@ -174,7 +224,7 @@ struct CompositorServicesImmersiveSpace: Scene {
 			.persistentSystemOverlays(Self.preferredPersistentSystemOverlays)
 		}
 		.immersionStyle(selection: .constant(Self.initialImmersionStyle), in: .mixed, .full)
-		.upperLimbVisibility(Self.preferredUpperLimbVisibility)
+		.upperLimbVisibility(limbModel.visibility)
 	}
 }
 
