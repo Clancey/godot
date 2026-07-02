@@ -30,7 +30,7 @@
 
 #import "godot_app_delegate_service_visionos.h"
 
-NSString *const GDTUpperLimbVisibilityDidChangeNotification = @"GDTUpperLimbVisibilityDidChangeNotification";
+NSString *_Nonnull const GDTUpperLimbVisibilityDidChangeNotification = @"GDTUpperLimbVisibilityDidChangeNotification";
 
 static GDTRenderMode _renderMode = GDTRenderModeWindowed;
 static __weak cp_layer_renderer_t _layerRenderer = nil;

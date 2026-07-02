@@ -50,7 +50,7 @@ typedef NS_ENUM(NSInteger, GDTUpperLimbVisibility) {
 
 // Posted (on the main thread) whenever `upperLimbVisibility` changes, so the SwiftUI
 // ImmersiveSpace can re-apply `.upperLimbVisibility` without a relaunch.
-extern NSString *const GDTUpperLimbVisibilityDidChangeNotification;
+extern NSString *_Nonnull const GDTUpperLimbVisibilityDidChangeNotification;
 
 @interface GDTAppDelegateServiceVisionOS : GDTAppDelegateService
 
