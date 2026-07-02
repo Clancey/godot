@@ -104,8 +104,11 @@ final class UpperLimbVisibilityModel: ObservableObject {
 	@Published var visibility: Visibility = CompositorServicesImmersiveSpace.resolveUpperLimbVisibility()
 
 	private init() {
+		// Swift imports the `_Nonnull` ObjC "…Notification" NSString constant as a typed
+		// NSNotification.Name with the suffix dropped (GDTUpperLimbVisibilityDidChangeNotification
+		// → NSNotification.Name.GDTUpperLimbVisibilityDidChange).
 		NotificationCenter.default.addObserver(
-			forName: NSNotification.Name(GDTUpperLimbVisibilityDidChangeNotification),
+			forName: .GDTUpperLimbVisibilityDidChange,
 			object: nil,
 			queue: .main
 		) { [weak self] _ in
