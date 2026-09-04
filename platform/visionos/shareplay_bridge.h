@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  bridging_header_visionos.h                                            */
+/*  shareplay_bridge.h                                                    */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,9 +30,44 @@
 
 #pragma once
 
-#import "godot_app_delegate_service_visionos.h"
-#import "godot_app_delegate_visionos.h"
-#import "godot_compositor_services_renderer.h"
-#import "shareplay_bridge_types.h"
+// C-callable bridge to the Swift SharePlaySessionManager.
+//
+// The entry points below are implemented in Swift with `@_cdecl` (see
+// `SharePlayBridge.swift`). Using a plain C interface avoids depending on the
+// generated `-Swift.h` header from Objective-C++.
+//
+// Do NOT import this header from `bridging_header_visionos.h`; see
+// `shareplay_bridge_types.h` for why.
 
-#import "drivers/apple_embedded/bridging_header_apple_embedded.h"
+#include "shareplay_bridge_types.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Session lifecycle.
+void godot_shareplay_set_activity_title(const char *title);
+void godot_shareplay_start_activity(void);
+void godot_shareplay_end_activity(void);
+
+// State queries.
+bool godot_shareplay_is_session_active(void);
+const char *godot_shareplay_get_local_participant_id(void);
+int godot_shareplay_get_participant_count(void);
+
+// Messaging. A null `recipient_id` broadcasts to every participant.
+void godot_shareplay_send_message(const uint8_t *data, int length, const char *recipient_id);
+
+// Callback registration. Callbacks are invoked on the SharePlay dispatch queue.
+void godot_shareplay_set_message_callback(godot_shareplay_message_callback_t callback, void *userdata);
+void godot_shareplay_set_participant_joined_callback(godot_shareplay_participant_callback_t callback, void *userdata);
+void godot_shareplay_set_participant_left_callback(godot_shareplay_participant_callback_t callback, void *userdata);
+void godot_shareplay_set_session_started_callback(godot_shareplay_session_callback_t callback, void *userdata);
+void godot_shareplay_set_session_ended_callback(godot_shareplay_session_callback_t callback, void *userdata);
+
+#ifdef __cplusplus
+}
+#endif

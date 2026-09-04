@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SharePlayMultiplayerPeer" inherits="MultiplayerPeer" experimental="" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A [MultiplayerPeer] implementation backed by SharePlay on visionOS.
+	</brief_description>
+	<description>
+		Implements Godot's high-level multiplayer API on top of Apple's SharePlay and GroupActivities frameworks, letting players in the same FaceTime call share a Godot session without any game server.
+		The peer that calls [method start_activity] becomes the server and is always assigned peer ID [code]1[/code]. Every other participant is assigned a generated peer ID as they join.
+		Messages are delivered reliably and in order, so [method MultiplayerPeer.get_packet_mode] always reports [constant MultiplayerPeer.TRANSFER_MODE_RELIABLE].
+		[b]Note:[/b] This class is only available on visionOS, and requires an active FaceTime call to start a session.
+		[codeblock]
+		var peer = SharePlayMultiplayerPeer.new()
+		peer.activity_title = "My Game"
+		peer.start_activity()
+		multiplayer.multiplayer_peer = peer
+		[/codeblock]
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="end_activity">
+			<return type="void" />
+			<description>
+				Ends the current SharePlay activity for the local participant and closes the peer. Does nothing if no activity is running.
+			</description>
+		</method>
+		<method name="start_activity">
+			<return type="Error" enum="Error" />
+			<description>
+				Starts a SharePlay activity and makes this peer the server, using [member activity_title] as the name shown in the system UI.
+				Returns [constant OK] if the activity was requested, or [constant ERR_ALREADY_IN_USE] if an activity is already running. Because activation is asynchronous, [method MultiplayerPeer.get_connection_status] stays [constant MultiplayerPeer.CONNECTION_CONNECTING] until the system confirms the session.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="activity_title" type="String" setter="set_activity_title" getter="get_activity_title" default="&quot;Shared Space&quot;">
+			The title shown in the system SharePlay UI for this activity. Set this before calling [method start_activity].
+		</member>
+	</members>
+</class>

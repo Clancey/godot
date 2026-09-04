@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  bridging_header_visionos.h                                            */
+/*  shareplay_bridge_types.h                                              */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,9 +30,26 @@
 
 #pragma once
 
-#import "godot_app_delegate_service_visionos.h"
-#import "godot_app_delegate_visionos.h"
-#import "godot_compositor_services_renderer.h"
-#import "shareplay_bridge_types.h"
+// Callback function pointer types shared between the Swift SharePlay bridge and
+// the Godot SharePlayMultiplayerPeer.
+//
+// This header deliberately contains *only* type definitions. It is imported by
+// `bridging_header_visionos.h` so Swift can name these types, and the Swift side
+// defines the bridge entry points with `@_cdecl`. Declaring those same functions
+// here would make Swift see both an imported C declaration and its own
+// definition, which is an invalid redeclaration. The C declarations therefore
+// live in `shareplay_bridge.h`, which is only included from Objective-C++.
 
-#import "drivers/apple_embedded/bridging_header_apple_embedded.h"
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef void (*godot_shareplay_message_callback_t)(const uint8_t *data, int length, const char *sender_id, void *userdata);
+typedef void (*godot_shareplay_participant_callback_t)(const char *participant_id, void *userdata);
+typedef void (*godot_shareplay_session_callback_t)(void *userdata);
+
+#ifdef __cplusplus
+}
+#endif

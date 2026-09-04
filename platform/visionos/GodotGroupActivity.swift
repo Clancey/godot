@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  bridging_header_visionos.h                                            */
+/*  GodotGroupActivity.swift                                            */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,11 +28,24 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#pragma once
+import Foundation
+import GroupActivities
 
-#import "godot_app_delegate_service_visionos.h"
-#import "godot_app_delegate_visionos.h"
-#import "godot_compositor_services_renderer.h"
-#import "shareplay_bridge_types.h"
+/// The GroupActivity type used by Godot for SharePlay shared spaces.
+struct GodotGroupActivity: GroupActivity {
+    static let activityIdentifier = "org.godotengine.shareplay.shared-space"
 
-#import "drivers/apple_embedded/bridging_header_apple_embedded.h"
+    var metadata: GroupActivityMetadata {
+        var meta = GroupActivityMetadata()
+        meta.type = .generic
+        meta.title = SharePlaySessionManager.shared.activityTitle
+        meta.supportsContinuationOnTV = false
+        return meta
+    }
+}
+
+/// A simple wrapper for the raw data packets exchanged between participants.
+struct GodotSharePlayMessage: Codable, Sendable {
+    let senderID: String
+    let payload: Data
+}

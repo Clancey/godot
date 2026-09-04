@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  bridging_header_visionos.h                                            */
+/*  register_types.mm                                                     */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,11 +28,28 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#pragma once
+#include "register_types.h"
 
-#import "godot_app_delegate_service_visionos.h"
-#import "godot_app_delegate_visionos.h"
-#import "godot_compositor_services_renderer.h"
-#import "shareplay_bridge_types.h"
+#ifdef VISIONOS_ENABLED
 
-#import "drivers/apple_embedded/bridging_header_apple_embedded.h"
+#include "shareplay_multiplayer_peer.h"
+
+#include "core/object/class_db.h"
+
+#endif // VISIONOS_ENABLED
+
+void initialize_visionos_shareplay_module(ModuleInitializationLevel p_level) {
+	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+		return;
+	}
+
+#ifdef VISIONOS_ENABLED
+	GDREGISTER_CLASS(SharePlayMultiplayerPeer);
+#endif
+}
+
+void uninitialize_visionos_shareplay_module(ModuleInitializationLevel p_level) {
+	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+		return;
+	}
+}
