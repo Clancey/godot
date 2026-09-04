@@ -192,7 +192,7 @@ bool VisionOSXRInterface::initialize() {
 
 	// Hand tracking
 	if (hands.enabled) {
-		hands.initialize(xr_server);
+		hands.initialize(xr_server, controllers.enabled);
 	}
 
 	// Controllers
@@ -272,6 +272,7 @@ void VisionOSXRInterface::uninitialize() {
 				xr_server->remove_tracker(hands.right_hand_tracker);
 				hands.right_hand_tracker.unref();
 			}
+			hands.uninitialize(xr_server);
 		}
 
 		if (cs.enabled) {
@@ -633,6 +634,21 @@ void VisionOSXRInterface::process() {
 
 		if (hands.active()) {
 			hands.update_hand_trackers_from_arkit(trackable_anchor_time);
+
+			// Mirror hand gestures onto the controller-style trackers so
+			// XRController3D based gameplay works hands-free. A hand with a
+			// physical accessory attached is left to the accessory.
+			if (controllers.enabled) {
+				if (controllers.left_gc_controller == nullptr) {
+					hands.publish_gestures(VisionOSHandTracking::HAND_LEFT, controllers.left_controller_tracker);
+				}
+				if (controllers.right_gc_controller == nullptr) {
+					hands.publish_gestures(VisionOSHandTracking::HAND_RIGHT, controllers.right_controller_tracker);
+				}
+			} else {
+				hands.publish_gestures(VisionOSHandTracking::HAND_LEFT, hands.left_hand_controller_tracker);
+				hands.publish_gestures(VisionOSHandTracking::HAND_RIGHT, hands.right_hand_controller_tracker);
+			}
 		}
 
 		if (controllers.active()) {
