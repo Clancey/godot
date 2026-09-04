@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="VisionOSPlaneTracker" inherits="XRPositionalTracker" experimental="" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A tracker for a plane detected by visionOS.
+	</brief_description>
+	<description>
+		Exposes a flat surface ARKit detected in the user's surroundings, such as a floor, wall, table, or ceiling. Enable this with the [code]xr/visionos/scene_understanding/enable_plane_detection[/code] project setting.
+		[member plane_alignment] tells you how the plane is oriented and [member plane_label] carries ARKit's semantic classification. ARKit refines planes as it scans, so connect to [signal mesh_changed] and re-fetch geometry rather than caching it.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="clear_mesh_data">
+			<return type="void" />
+			<description>
+				Clears the cached geometry for this plane.
+			</description>
+		</method>
+		<method name="get_mesh">
+			<return type="Mesh" />
+			<description>
+				Returns the plane's geometry as a [Mesh]. If ARKit supplied a detailed boundary polygon that is used, otherwise a quad of [member bounds_size] is returned. The mesh is built on first use and cached until the data changes.
+			</description>
+		</method>
+		<method name="get_mesh_offset">
+			<return type="Transform3D" />
+			<description>
+				Returns the transform of the geometry returned by [method get_mesh] relative to this tracker's pose.
+			</description>
+		</method>
+		<method name="get_shape">
+			<return type="Shape3D" />
+			<param index="0" name="thickness" type="float" default="0.01" />
+			<description>
+				Returns a collision shape matching this plane, extruded by [param thickness] metres so thin surfaces still collide reliably. The shape is built on first use and cached until the data changes.
+			</description>
+		</method>
+		<method name="set_mesh_data">
+			<return type="void" />
+			<param index="0" name="origin" type="Transform3D" />
+			<param index="1" name="vertices" type="PackedVector2Array" />
+			<param index="2" name="indices" type="PackedInt32Array" default="PackedInt32Array()" />
+			<description>
+				Sets the plane's boundary geometry. This is normally called by the engine as ARKit reports updates.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="bounds_size" type="Vector2" setter="set_bounds_size" getter="get_bounds_size" default="Vector2(0, 0)">
+			The size of the plane's bounding rectangle, in metres.
+		</member>
+		<member name="plane_alignment" type="int" setter="set_plane_alignment" getter="get_plane_alignment" enum="VisionOSPlaneTracker.PlaneAlignment" default="0">
+			How this plane is oriented in space.
+		</member>
+		<member name="plane_label" type="String" setter="set_plane_label" getter="get_plane_label" default="&quot;&quot;">
+			ARKit's semantic classification for this plane, such as [code]floor[/code], [code]wall[/code], [code]table[/code], or [code]ceiling[/code]. Empty when ARKit has not classified it.
+		</member>
+	</members>
+	<signals>
+		<signal name="mesh_changed">
+			<description>
+				Emitted when ARKit updates this plane's geometry. Any [Mesh] or [Shape3D] previously returned is now out of date.
+			</description>
+		</signal>
+	</signals>
+	<constants>
+		<constant name="PLANE_ALIGNMENT_HORIZONTAL_UPWARD" value="0" enum="PlaneAlignment">
+			A horizontal plane facing up, such as a floor or a table top.
+		</constant>
+		<constant name="PLANE_ALIGNMENT_HORIZONTAL_DOWNWARD" value="1" enum="PlaneAlignment">
+			A horizontal plane facing down, such as a ceiling.
+		</constant>
+		<constant name="PLANE_ALIGNMENT_VERTICAL" value="2" enum="PlaneAlignment">
+			A vertical plane, such as a wall.
+		</constant>
+		<constant name="PLANE_ALIGNMENT_ARBITRARY" value="3" enum="PlaneAlignment">
+			A plane at an arbitrary angle.
+		</constant>
+	</constants>
+</class>

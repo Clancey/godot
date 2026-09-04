@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  register_types.mm                                                     */
+/*  visionos_anchor_tracker.h                                             */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,69 +28,34 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+#pragma once
+
 #ifdef VISIONOS_ENABLED
 
-#include "register_types.h"
+#include "servers/xr/xr_positional_tracker.h"
 
-#include "visionos_anchor_tracker.h"
-#include "visionos_mesh_tracker.h"
-#include "visionos_plane_tracker.h"
-#include "visionos_spatial_anchor_capability.h"
-#include "visionos_xr_interface.h"
+class VisionOSAnchorTracker : public XRPositionalTracker {
+	GDCLASS(VisionOSAnchorTracker, XRPositionalTracker);
 
-#include "core/config/engine.h"
-#include "core/object/class_db.h"
+public:
+	VisionOSAnchorTracker();
 
-Ref<VisionOSXRInterface> visionos_xr;
-VisionOSSpatialAnchorCapability *visionos_anchor_capability = nullptr;
+	void set_anchor_uuid(const String &p_uuid);
+	String get_anchor_uuid() const;
 
-void initialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
+	void set_anchor_tracked(bool p_tracked);
+	bool get_anchor_tracked() const;
 
-	GDREGISTER_CLASS(VisionOSXRInterface);
-	GDREGISTER_CLASS(VisionOSPlaneTracker);
-	GDREGISTER_CLASS(VisionOSMeshTracker);
-	GDREGISTER_CLASS(VisionOSAnchorTracker);
-	GDREGISTER_CLASS(VisionOSSpatialAnchorCapability);
+	void set_shared_with_nearby_participants(bool p_shared);
+	bool get_shared_with_nearby_participants() const;
 
-	// Exposed as a singleton, mirroring OpenXRSpatialAnchorCapability.
-	visionos_anchor_capability = memnew(VisionOSSpatialAnchorCapability);
-	Engine::get_singleton()->add_singleton(Engine::Singleton("VisionOSSpatialAnchorCapability", visionos_anchor_capability));
+protected:
+	static void _bind_methods();
 
-	if (XRServer::get_singleton()) {
-		visionos_xr.instantiate();
-		visionos_anchor_capability->set_scene_understanding(visionos_xr->get_scene_understanding());
-		XRServer::get_singleton()->add_interface(visionos_xr);
-	}
-}
-
-void uninitialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
-
-	if (visionos_xr.is_valid()) {
-		// uninitialize our interface if it is initialized
-		if (visionos_xr->is_initialized()) {
-			visionos_xr->uninitialize();
-		}
-
-		// unregister our interface from the XR server
-		if (XRServer::get_singleton()) {
-			XRServer::get_singleton()->remove_interface(visionos_xr);
-		}
-
-		// and release
-		visionos_xr.unref();
-	}
-
-	if (visionos_anchor_capability != nullptr) {
-		Engine::get_singleton()->remove_singleton("VisionOSSpatialAnchorCapability");
-		memdelete(visionos_anchor_capability);
-		visionos_anchor_capability = nullptr;
-	}
-}
+private:
+	String uuid;
+	bool tracked = false;
+	bool shared_with_nearby_participants = false;
+};
 
 #endif // VISIONOS_ENABLED

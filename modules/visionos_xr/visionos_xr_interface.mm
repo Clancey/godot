@@ -81,6 +81,18 @@ void VisionOSXRInterface::emit_signal_enum(SignalEnum p_signal) {
 	emit_signal(get_signal_name(p_signal));
 }
 
+Ref<VisionOSAnchorTracker> VisionOSXRInterface::create_spatial_anchor(const Transform3D &p_transform, bool p_shared) {
+	return scene_understanding.create_anchor(p_transform, p_shared);
+}
+
+void VisionOSXRInterface::remove_spatial_anchor(Ref<VisionOSAnchorTracker> p_anchor) {
+	scene_understanding.remove_anchor(p_anchor);
+}
+
+bool VisionOSXRInterface::is_anchor_sharing_available() const {
+	return scene_understanding.is_anchor_sharing_available();
+}
+
 void VisionOSXRInterface::_bind_methods() {
 	// Signals
 	for (int i = 0; i < VISIONOS_XR_SIGNAL_MAX; i++) {
@@ -90,6 +102,11 @@ void VisionOSXRInterface::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_current_render_quality"), &VisionOSXRInterface::get_current_render_quality);
 	ClassDB::bind_method(D_METHOD("set_current_render_quality", "render_quality"), &VisionOSXRInterface::set_current_render_quality);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "current_render_quality"), "set_current_render_quality", "get_current_render_quality");
+
+	// Scene understanding
+	ClassDB::bind_method(D_METHOD("create_spatial_anchor", "transform", "shared"), &VisionOSXRInterface::create_spatial_anchor, DEFVAL(false));
+	ClassDB::bind_method(D_METHOD("remove_spatial_anchor", "anchor"), &VisionOSXRInterface::remove_spatial_anchor);
+	ClassDB::bind_method(D_METHOD("is_anchor_sharing_available"), &VisionOSXRInterface::is_anchor_sharing_available);
 
 	BIND_ENUM_CONSTANT(IMMERSION_STYLE_FULL);
 	BIND_ENUM_CONSTANT(IMMERSION_STYLE_MIXED);
@@ -149,6 +166,7 @@ bool VisionOSXRInterface::initialize() {
 	cs.enabled = (app_delegate_render_mode == GDTRenderModeCompositorServices);
 	hands.enabled = GLOBAL_GET("xr/visionos/enable_hand_tracking");
 	controllers.enabled = GLOBAL_GET("xr/visionos/enable_controller_tracking");
+	scene_understanding.configure_from_project_settings();
 
 	// ARKit session
 	ar_session = ar_session_create();
@@ -182,17 +200,22 @@ bool VisionOSXRInterface::initialize() {
 		controllers.initialize(xr_server, this);
 	}
 
+	// Scene understanding
+	if (scene_understanding.enabled()) {
+		scene_understanding.initialize(ar_session, cs.world_tracking_provider);
+	}
+
 	// Running the ARKit session for head tracking, at first
 	run_ar_session();
 
 	// Check the authorizations asynchronously
-	if (hands.enabled || controllers.enabled) {
+	if (hands.enabled || controllers.enabled || scene_understanding.enabled()) {
 		update_authorizations_async();
 	}
 
 	initialized = true;
 
-	print_verbose(String("VisionOSXRInterface initialized with:") + " compositorservices=" + (cs.enabled ? "yes" : "no") + " hands=" + (hands.enabled ? "yes" : "no") + " controllers=" + (controllers.enabled ? "yes" : "no"));
+	print_verbose(String("VisionOSXRInterface initialized with:") + " compositorservices=" + (cs.enabled ? "yes" : "no") + " hands=" + (hands.enabled ? "yes" : "no") + " controllers=" + (controllers.enabled ? "yes" : "no") + " scene_understanding=" + (scene_understanding.enabled() ? "yes" : "no"));
 
 	return initialized;
 }
@@ -232,6 +255,10 @@ void VisionOSXRInterface::uninitialize() {
 
 	XRServer *xr_server = XRServer::get_singleton();
 	if (xr_server != nullptr) {
+		if (scene_understanding.enabled()) {
+			scene_understanding.uninitialize();
+		}
+
 		if (controllers.enabled) {
 			controllers.uninitialize(xr_server);
 		}
@@ -471,6 +498,10 @@ void VisionOSXRInterface::update_authorizations_async() {
 		types |= ar_authorization_type_accessory_tracking;
 	}
 
+	if (scene_understanding.enabled()) {
+		types |= ar_authorization_type_world_sensing;
+	}
+
 	if (types == ar_authorization_type_none) {
 		// Nothing to request
 		return;
@@ -491,6 +522,7 @@ void VisionOSXRInterface::update_authorizations_async() {
 void VisionOSXRInterface::update_from_authorizations(ar_authorization_results_t p_authorization_results) {
 	VisionOSAuthorizationStatus previous_hands = hands.authorization;
 	VisionOSAuthorizationStatus previous_controllers = controllers.authorization;
+	VisionOSAuthorizationStatus previous_scene_understanding = scene_understanding.authorization;
 
 	ar_authorization_results_enumerate_results(p_authorization_results, ^bool(ar_authorization_result_t authorization_result) {
 		ar_authorization_type_t type = ar_authorization_result_get_authorization_type(authorization_result);
@@ -509,6 +541,12 @@ void VisionOSXRInterface::update_from_authorizations(ar_authorization_results_t 
 					ERR_PRINT("Controller tracking not authorized. Enable it in `Settings > Privacy` and restart the app.");
 				}
 				break;
+			case ar_authorization_type_world_sensing:
+				scene_understanding.authorization = convert(status);
+				if (status == ar_authorization_status_denied) {
+					ERR_PRINT("World sensing not authorized. Enable it in `Settings > Privacy` and restart the app.");
+				}
+				break;
 			default:
 				break;
 		}
@@ -517,7 +555,7 @@ void VisionOSXRInterface::update_from_authorizations(ar_authorization_results_t 
 	});
 
 	// If something changed, re-run the ARKit session with updated authorizations
-	if (previous_hands != hands.authorization || previous_controllers != controllers.authorization) {
+	if (previous_hands != hands.authorization || previous_controllers != controllers.authorization || previous_scene_understanding != scene_understanding.authorization) {
 		run_ar_session();
 	}
 }
@@ -535,6 +573,10 @@ void VisionOSXRInterface::run_ar_session() {
 
 	if (controllers.active()) {
 		ar_data_providers_add_data_provider(ar_data_providers, controllers.accessory_tracking_provider);
+	}
+
+	if (scene_understanding.active()) {
+		scene_understanding.add_providers_to(ar_data_providers);
 	}
 
 	// Running the ARSession with the given providers, after it has been configured
@@ -596,6 +638,10 @@ void VisionOSXRInterface::process() {
 		if (controllers.active()) {
 			controllers.update_controller_trackers_from_arkit(trackable_anchor_time);
 		}
+	}
+
+	if (scene_understanding.active()) {
+		scene_understanding.process();
 	}
 }
 

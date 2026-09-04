@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="VisionOSMeshTracker" inherits="XRPositionalTracker" experimental="" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A tracker for a chunk of visionOS scene reconstruction geometry.
+	</brief_description>
+	<description>
+		Exposes one chunk of the 3D mesh ARKit builds from the user's surroundings. Enable this with the [code]xr/visionos/scene_understanding/enable_scene_reconstruction[/code] project setting.
+		Use [method get_mesh] to render the geometry and [method get_shape] to collide against it. ARKit refines chunks as it scans, so connect to [signal mesh_changed] and re-fetch rather than caching the result.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="clear_mesh_data">
+			<return type="void" />
+			<description>
+				Clears the cached geometry for this chunk.
+			</description>
+		</method>
+		<method name="get_mesh">
+			<return type="Mesh" />
+			<description>
+				Returns the geometry of this chunk as a [Mesh], or [code]null[/code] if no geometry has been received yet. The mesh is built on first use and cached until the data changes.
+			</description>
+		</method>
+		<method name="get_shape">
+			<return type="Shape3D" />
+			<description>
+				Returns a [ConcavePolygonShape3D] matching this chunk's geometry, or [code]null[/code] if no geometry has been received yet. The shape is built on first use and cached until the data changes.
+			</description>
+		</method>
+	</methods>
+	<signals>
+		<signal name="mesh_changed">
+			<description>
+				Emitted when ARKit updates this chunk's geometry. Any [Mesh] or [Shape3D] previously returned is now out of date.
+			</description>
+		</signal>
+	</signals>
+</class>

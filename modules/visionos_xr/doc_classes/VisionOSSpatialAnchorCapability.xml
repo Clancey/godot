@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="VisionOSSpatialAnchorCapability" inherits="Object" experimental="" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Singleton for creating and persisting visionOS world anchors.
+	</brief_description>
+	<description>
+		Mirrors the [OpenXRSpatialAnchorCapability] API so anchor code can be shared between OpenXR runtimes and visionOS.
+		visionOS world anchors are persisted by the system automatically, so [method persist_anchor] simply reports success and [method unpersist_anchor] removes the anchor.
+		Requires the [code]xr/visionos/scene_understanding/enable_world_anchors[/code] project setting.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="create_new_anchor">
+			<return type="VisionOSAnchorTracker" />
+			<param index="0" name="transform" type="Transform3D" />
+			<description>
+				Creates a world anchor at [param transform] and returns a tracker for it, or [code]null[/code] on failure.
+			</description>
+		</method>
+		<method name="create_shared_anchor">
+			<return type="VisionOSAnchorTracker" />
+			<param index="0" name="transform" type="Transform3D" />
+			<description>
+				Creates a world anchor at [param transform] that is also shared with nearby SharePlay participants. Check [method is_sharing_available] first.
+			</description>
+		</method>
+		<method name="is_sharing_available">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] if anchors can currently be shared with nearby participants.
+			</description>
+		</method>
+		<method name="is_spatial_anchor_supported">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] if world anchors are available.
+			</description>
+		</method>
+		<method name="is_spatial_persistence_supported">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] if anchors persist across sessions. This matches [method is_spatial_anchor_supported] on visionOS, because the system always persists world anchors.
+			</description>
+		</method>
+		<method name="persist_anchor">
+			<return type="void" />
+			<param index="0" name="anchor_tracker" type="VisionOSAnchorTracker" />
+			<param index="1" name="user_callback" type="Callable" default="Callable()" />
+			<description>
+				Provided for parity with OpenXR. visionOS already persists world anchors, so this immediately invokes [param user_callback] with [param anchor_tracker] instead of doing any work.
+			</description>
+		</method>
+		<method name="remove_anchor">
+			<return type="void" />
+			<param index="0" name="anchor_tracker" type="VisionOSAnchorTracker" />
+			<description>
+				Removes [param anchor_tracker] and forgets its stored position.
+			</description>
+		</method>
+		<method name="unpersist_anchor">
+			<return type="void" />
+			<param index="0" name="anchor_tracker" type="VisionOSAnchorTracker" />
+			<param index="1" name="user_callback" type="Callable" default="Callable()" />
+			<description>
+				Removes the anchor so it is no longer restored in later sessions, then invokes [param user_callback] with [param anchor_tracker].
+			</description>
+		</method>
+	</methods>
+</class>

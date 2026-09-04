@@ -53,6 +53,8 @@
 typedef struct ar_world_tracking_provider *ar_world_tracking_provider_t;
 typedef struct ar_hand_tracking_provider *ar_hand_tracking_provider_t;
 typedef struct ar_accessory_tracking_provider *ar_accessory_tracking_provider_t;
+typedef struct ar_plane_detection_provider *ar_plane_detection_provider_t;
+typedef struct ar_scene_reconstruction_provider *ar_scene_reconstruction_provider_t;
 typedef struct ar_data_providers *ar_data_providers_t;
 typedef struct ar_data_provider *ar_data_provider_t;
 ;

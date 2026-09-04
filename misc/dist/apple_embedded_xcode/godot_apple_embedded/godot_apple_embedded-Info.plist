@@ -77,5 +77,6 @@
 	</dict>
     $hand_tracking_usage_description
     $accessory_tracking_usage_description
+    $world_sensing_usage_description
 </dict>
 </plist>

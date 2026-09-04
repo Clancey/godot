@@ -35,6 +35,7 @@
 #include "visionos_controller_tracking.h"
 #include "visionos_definitions.h"
 #include "visionos_hand_tracking.h"
+#include "visionos_scene_understanding.h"
 
 #ifdef __OBJC__
 #import <CompositorServices/CompositorServices.h>
@@ -120,6 +121,9 @@ private:
 
 	// Controller tracking
 	VisionOSControllerTracking controllers;
+
+	// Scene understanding (plane detection, scene reconstruction, world anchors)
+	VisionOSSceneUnderstanding scene_understanding;
 
 	// Data and functions only accessible from the rendering thread
 	class RenderThread : public Object {
@@ -247,6 +251,12 @@ public:
 
 	Visibility get_persistent_system_overlays();
 	void set_persistent_system_overlays(Visibility p_persistent_system_overlays);
+
+	// Scene understanding
+	Ref<VisionOSAnchorTracker> create_spatial_anchor(const Transform3D &p_transform, bool p_shared = false);
+	void remove_spatial_anchor(Ref<VisionOSAnchorTracker> p_anchor);
+	bool is_anchor_sharing_available() const;
+	VisionOSSceneUnderstanding *get_scene_understanding() { return &scene_understanding; }
 
 	// Methods called from the game thread
 	virtual void process() override;

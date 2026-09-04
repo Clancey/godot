@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="VisionOSAnchorTracker" inherits="XRPositionalTracker" experimental="" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A tracker for a visionOS world anchor.
+	</brief_description>
+	<description>
+		Represents an ARKit world anchor: a position in the user's surroundings that the system persists across sessions and re-locates automatically.
+		Create these through [method VisionOSXRInterface.create_spatial_anchor] or [method VisionOSSpatialAnchorCapability.create_new_anchor]. An anchor may temporarily stop being tracked when the user moves away from it; watch [signal tracking_state_changed] to react.
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="anchor_tracked" type="bool" setter="" getter="get_anchor_tracked" default="false">
+			If [code]true[/code], ARKit is currently tracking this anchor and its pose is valid.
+		</member>
+		<member name="anchor_uuid" type="String" setter="set_anchor_uuid" getter="get_anchor_uuid" default="&quot;&quot;">
+			The UUID ARKit assigned to this anchor. Store it to identify the anchor again in a later session.
+		</member>
+		<member name="shared_with_nearby_participants" type="bool" setter="" getter="get_shared_with_nearby_participants" default="false">
+			If [code]true[/code], this anchor is shared with nearby SharePlay participants.
+		</member>
+	</members>
+	<signals>
+		<signal name="tracking_state_changed">
+			<param index="0" name="is_tracked" type="bool" />
+			<description>
+				Emitted when ARKit starts or stops tracking this anchor.
+			</description>
+		</signal>
+	</signals>
+</class>
