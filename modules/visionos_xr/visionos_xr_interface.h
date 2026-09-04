@@ -116,6 +116,14 @@ private:
 
 	void update_from_authorizations(ar_authorization_results_t);
 
+	// Reads the live immersion style. Shared by get_immersion_style() and the
+	// environment blend mode, which is a portable view of the same setting.
+	ImmersionStyle get_current_immersion_style() const;
+
+	// visionOS composites passthrough using the alpha channel, so the root viewport
+	// needs a transparent background whenever passthrough is visible.
+	void update_transparent_background();
+
 	// Hand tracking
 	VisionOSHandTracking hands;
 
@@ -240,12 +248,15 @@ public:
 	virtual XRInterface::PlayAreaMode get_play_area_mode() const override;
 	virtual bool set_play_area_mode(XRInterface::PlayAreaMode p_mode) override;
 
+	virtual Array get_supported_environment_blend_modes() override;
+	virtual XRInterface::EnvironmentBlendMode get_environment_blend_mode() const override;
+	virtual bool set_environment_blend_mode(XRInterface::EnvironmentBlendMode p_mode) override;
+
 	float get_current_render_quality();
 	void set_current_render_quality(float p_render_quality);
 
 	ImmersionStyle get_immersion_style();
 	void set_immersion_style(ImmersionStyle p_immersion_style);
-
 	Visibility get_upper_limb_visibility();
 	void set_upper_limb_visibility(Visibility p_upper_limb_visibility);
 
