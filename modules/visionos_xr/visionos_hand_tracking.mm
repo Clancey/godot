@@ -95,9 +95,27 @@ _FORCE_INLINE_ XRHandTracker::HandJoint joint_from_arkit(ar_hand_skeleton_joint_
 			return XRHandTracker::HAND_JOINT_MAX;
 	}
 }
+
+// Pinch detection: thumb tip to index tip distance, with hysteresis so the click
+// doesn't chatter around the threshold.
+constexpr float PINCH_PRESS_DISTANCE_M = 0.025f;
+constexpr float PINCH_RELEASE_DISTANCE_M = 0.04f;
+constexpr float PINCH_ANALOG_MAX_DISTANCE_M = 0.06f;
+constexpr float PINCH_SMOOTHING_FACTOR = 0.35f;
+
+// Grasp (fist) detection: how far each fingertip is curled toward the palm.
+constexpr float GRASP_CURL_CLOSE_DISTANCE_M = 0.04f; // Fully curled.
+constexpr float GRASP_CURL_OPEN_DISTANCE_M = 0.10f; // Fully open.
+constexpr float GRASP_PRESS_THRESHOLD = 0.7f;
+constexpr float GRASP_RELEASE_THRESHOLD = 0.5f;
+constexpr float GRASP_SMOOTHING_FACTOR = 0.35f;
+
+_FORCE_INLINE_ bool is_joint_tracked(const Ref<XRHandTracker> &p_hand_tracker, XRHandTracker::HandJoint p_joint) {
+	return p_hand_tracker->get_hand_joint_flags(p_joint).has_flag(XRHandTracker::HAND_JOINT_FLAG_POSITION_TRACKED);
+}
 } // namespace
 
-void VisionOSHandTracking::initialize(XRServer *p_xr_server) {
+void VisionOSHandTracking::initialize(XRServer *p_xr_server, bool p_accessory_tracking_enabled) {
 	// Hand tracking provider (registered with the shared ARKit session)
 	ar_hand_tracking_configuration_t hand_tracking_configuration = ar_hand_tracking_configuration_create();
 	hand_tracking_provider = ar_hand_tracking_provider_create(hand_tracking_configuration);
@@ -113,8 +131,40 @@ void VisionOSHandTracking::initialize(XRServer *p_xr_server) {
 	right_hand_tracker->set_tracker_name("/user/hand_tracker/right");
 	p_xr_server->add_tracker(right_hand_tracker);
 
+	// When accessory tracking is enabled, VisionOSControllerTracking registers
+	// `left_hand` and `right_hand` itself and gestures are mirrored into those.
+	// Otherwise register them here so hand gestures still drive XRController3D.
+	if (!p_accessory_tracking_enabled) {
+		left_hand_controller_tracker.instantiate();
+		left_hand_controller_tracker->set_tracker_hand(XRPositionalTracker::TRACKER_HAND_LEFT);
+		left_hand_controller_tracker->set_tracker_name("left_hand");
+		left_hand_controller_tracker->set_tracker_desc("visionOS Left Hand");
+		p_xr_server->add_tracker(left_hand_controller_tracker);
+
+		right_hand_controller_tracker.instantiate();
+		right_hand_controller_tracker->set_tracker_hand(XRPositionalTracker::TRACKER_HAND_RIGHT);
+		right_hand_controller_tracker->set_tracker_name("right_hand");
+		right_hand_controller_tracker->set_tracker_desc("visionOS Right Hand");
+		p_xr_server->add_tracker(right_hand_controller_tracker);
+	}
+
 	left_hand_anchor = ar_hand_anchor_create();
 	right_hand_anchor = ar_hand_anchor_create();
+}
+
+void VisionOSHandTracking::uninitialize(XRServer *p_xr_server) {
+	if (p_xr_server == nullptr) {
+		return;
+	}
+
+	if (left_hand_controller_tracker.is_valid()) {
+		p_xr_server->remove_tracker(left_hand_controller_tracker);
+		left_hand_controller_tracker.unref();
+	}
+	if (right_hand_controller_tracker.is_valid()) {
+		p_xr_server->remove_tracker(right_hand_controller_tracker);
+		right_hand_controller_tracker.unref();
+	}
 }
 
 void VisionOSHandTracking::update_hand_trackers_from_arkit(CFTimeInterval p_trackable_anchor_time) {
@@ -128,6 +178,8 @@ void VisionOSHandTracking::update_hand_trackers_from_arkit(CFTimeInterval p_trac
 		if (query_anchor_result != ar_hand_anchor_query_status_success) {
 			reset_hand_tracker_data(left_hand_tracker);
 			reset_hand_tracker_data(right_hand_tracker);
+			reset_gestures(HAND_LEFT, left_hand_tracker);
+			reset_gestures(HAND_RIGHT, right_hand_tracker);
 			ERR_FAIL_MSG("Cannot query hand anchors, result: " + itos(query_anchor_result) + ".");
 		}
 	} else {
@@ -137,21 +189,148 @@ void VisionOSHandTracking::update_hand_trackers_from_arkit(CFTimeInterval p_trac
 		if (!result) {
 			reset_hand_tracker_data(left_hand_tracker);
 			reset_hand_tracker_data(right_hand_tracker);
+			reset_gestures(HAND_LEFT, left_hand_tracker);
+			reset_gestures(HAND_RIGHT, right_hand_tracker);
 			ERR_FAIL_MSG("Cannot query latest anchors, the ARKit session is probably not running.");
 		}
 	}
 
 	if (ar_hand_anchor_is_tracked(left_hand_anchor)) {
 		set_hand_tracker_data_from_arkit(left_hand_tracker, left_hand_anchor);
+		update_gestures(HAND_LEFT, left_hand_tracker);
 	} else {
 		reset_hand_tracker_data(left_hand_tracker);
+		reset_gestures(HAND_LEFT, left_hand_tracker);
 	}
 
 	if (ar_hand_anchor_is_tracked(right_hand_anchor)) {
 		set_hand_tracker_data_from_arkit(right_hand_tracker, right_hand_anchor);
+		update_gestures(HAND_RIGHT, right_hand_tracker);
 	} else {
 		reset_hand_tracker_data(right_hand_tracker);
+		reset_gestures(HAND_RIGHT, right_hand_tracker);
 	}
+}
+
+void VisionOSHandTracking::update_gestures(HandIndex p_hand, const Ref<XRHandTracker> &p_hand_tracker) {
+	GestureState &state = gestures[p_hand];
+
+	// Pinch: thumb tip to index tip.
+	if (is_joint_tracked(p_hand_tracker, XRHandTracker::HAND_JOINT_THUMB_TIP) &&
+			is_joint_tracked(p_hand_tracker, XRHandTracker::HAND_JOINT_INDEX_FINGER_TIP)) {
+		const Vector3 thumb_tip = p_hand_tracker->get_hand_joint_transform(XRHandTracker::HAND_JOINT_THUMB_TIP).origin;
+		const Vector3 index_tip = p_hand_tracker->get_hand_joint_transform(XRHandTracker::HAND_JOINT_INDEX_FINGER_TIP).origin;
+
+		const float distance = thumb_tip.distance_to(index_tip);
+		const float raw_pinch = CLAMP(
+				(PINCH_ANALOG_MAX_DISTANCE_M - distance) / (PINCH_ANALOG_MAX_DISTANCE_M - PINCH_PRESS_DISTANCE_M),
+				0.0f, 1.0f);
+
+		state.pinch_value = Math::lerp(state.pinch_value, raw_pinch, PINCH_SMOOTHING_FACTOR);
+		state.pinch_click = state.pinch_click ? distance < PINCH_RELEASE_DISTANCE_M : distance < PINCH_PRESS_DISTANCE_M;
+	} else {
+		state.pinch_value = 0.0f;
+		state.pinch_click = false;
+	}
+
+	// Grasp: average curl of the four non-thumb fingers, measured as the distance
+	// from each fingertip to the palm.
+	const XRHandTracker::HandJoint curl_joints[] = {
+		XRHandTracker::HAND_JOINT_INDEX_FINGER_TIP,
+		XRHandTracker::HAND_JOINT_MIDDLE_FINGER_TIP,
+		XRHandTracker::HAND_JOINT_RING_FINGER_TIP,
+		XRHandTracker::HAND_JOINT_PINKY_FINGER_TIP,
+	};
+
+	float curl_sum = 0.0f;
+	int tracked_count = 0;
+
+	if (is_joint_tracked(p_hand_tracker, XRHandTracker::HAND_JOINT_PALM)) {
+		const Vector3 palm = p_hand_tracker->get_hand_joint_transform(XRHandTracker::HAND_JOINT_PALM).origin;
+
+		for (const XRHandTracker::HandJoint &joint : curl_joints) {
+			if (!is_joint_tracked(p_hand_tracker, joint)) {
+				continue;
+			}
+
+			const float distance = palm.distance_to(p_hand_tracker->get_hand_joint_transform(joint).origin);
+			curl_sum += CLAMP(
+					(GRASP_CURL_OPEN_DISTANCE_M - distance) / (GRASP_CURL_OPEN_DISTANCE_M - GRASP_CURL_CLOSE_DISTANCE_M),
+					0.0f, 1.0f);
+			tracked_count++;
+		}
+	}
+
+	// Fall back to pinch when too few fingers are tracked, which happens when the
+	// hand is turned away from the sensors, so grabbing still works.
+	float raw_grasp = (tracked_count >= 2) ? (curl_sum / tracked_count) : 0.0f;
+	raw_grasp = MAX(raw_grasp, state.pinch_click ? 1.0f : state.pinch_value);
+
+	state.grasp_value = Math::lerp(state.grasp_value, raw_grasp, GRASP_SMOOTHING_FACTOR);
+	state.grasp_click = state.grasp_click ? state.grasp_value > GRASP_RELEASE_THRESHOLD : state.grasp_value > GRASP_PRESS_THRESHOLD;
+
+	p_hand_tracker->set_input("pinch", state.pinch_value);
+	p_hand_tracker->set_input("pinch_click", state.pinch_click);
+	p_hand_tracker->set_input("grasp", state.grasp_value);
+	p_hand_tracker->set_input("grasp_click", state.grasp_click);
+}
+
+void VisionOSHandTracking::reset_gestures(HandIndex p_hand, const Ref<XRHandTracker> &p_hand_tracker) {
+	gestures[p_hand] = GestureState();
+
+	p_hand_tracker->set_input("pinch", 0.0f);
+	p_hand_tracker->set_input("pinch_click", false);
+	p_hand_tracker->set_input("grasp", 0.0f);
+	p_hand_tracker->set_input("grasp_click", false);
+}
+
+void VisionOSHandTracking::publish_gestures(HandIndex p_hand, const Ref<XRControllerTracker> &p_controller_tracker) {
+	if (p_controller_tracker.is_null()) {
+		return;
+	}
+
+	const GestureState &state = gestures[p_hand];
+	const Ref<XRHandTracker> &hand_tracker = (p_hand == HAND_LEFT) ? left_hand_tracker : right_hand_tracker;
+
+	// Map onto the same action names the accessory controllers use, so gameplay
+	// built on XRController3D works with either input source.
+	p_controller_tracker->set_input("trigger", state.pinch_value);
+	p_controller_tracker->set_input("trigger_click", state.pinch_click);
+	p_controller_tracker->set_input("grip", state.grasp_value);
+	p_controller_tracker->set_input("grip_click", state.grasp_click);
+
+	if (hand_tracker.is_null() || !hand_tracker->get_has_tracking_data()) {
+		p_controller_tracker->invalidate_pose("default");
+		p_controller_tracker->invalidate_pose("aim");
+		p_controller_tracker->invalidate_pose("grip");
+		p_controller_tracker->invalidate_pose("palm");
+		return;
+	}
+
+	const Transform3D palm = hand_tracker->get_hand_joint_transform(XRHandTracker::HAND_JOINT_PALM);
+
+	// Aim points along the index finger when it is tracked, otherwise it follows
+	// the palm.
+	Transform3D aim = palm;
+	if (is_joint_tracked(hand_tracker, XRHandTracker::HAND_JOINT_INDEX_FINGER_PHALANX_PROXIMAL) &&
+			is_joint_tracked(hand_tracker, XRHandTracker::HAND_JOINT_INDEX_FINGER_TIP)) {
+		const Vector3 knuckle = hand_tracker->get_hand_joint_transform(XRHandTracker::HAND_JOINT_INDEX_FINGER_PHALANX_PROXIMAL).origin;
+		const Vector3 tip = hand_tracker->get_hand_joint_transform(XRHandTracker::HAND_JOINT_INDEX_FINGER_TIP).origin;
+		const Vector3 direction = tip - knuckle;
+		const Vector3 up = palm.basis.get_column(Vector3::AXIS_Y);
+
+		// Skip the degenerate case rather than let looking_at() warn every frame.
+		if (!direction.is_zero_approx() && !up.cross(direction).is_zero_approx()) {
+			// Godot poses look down -Z.
+			aim.basis = Basis::looking_at(direction, up);
+			aim.origin = tip;
+		}
+	}
+
+	p_controller_tracker->set_pose("default", aim, Vector3(), Vector3());
+	p_controller_tracker->set_pose("aim", aim, Vector3(), Vector3());
+	p_controller_tracker->set_pose("grip", palm, Vector3(), Vector3());
+	p_controller_tracker->set_pose("palm", palm, Vector3(), Vector3());
 }
 
 void VisionOSHandTracking::reset_hand_tracker_data(Ref<XRHandTracker> p_hand_tracker) {

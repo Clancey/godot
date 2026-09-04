@@ -4,10 +4,11 @@
 		visionOS XR implementation for rendering in immersive mode, hand tracking, and controller tracking.
 	</brief_description>
 	<description>
-		This is a visionOS XR implementation. It has three modules:
+		This is a visionOS XR implementation. It has four modules:
 		- the CompositorServices module, to render with Godot in immersive mode
 		- the hand tracking module, using Apple's ARKit
-		- the spatial controller module, using Apple's ARKit and GCController.
+		- the spatial controller module, using Apple's ARKit and GCController
+		- the scene understanding module, using Apple's ARKit, for plane detection, scene reconstruction, and world anchors.
 		Those modules can be enabled/disabled independently. The rendering module uses the CompositorServices framework to render an Immersive scene. It supports the full and mixed immersion modes. To use this module, you must set the [member EditorExportPlatformVisionOS.application/app_role] export setting to [code]Immersive[/code]. You can choose the immersion style using the [member EditorExportPlatformVisionOS.application/immersion_style] export setting. You must use the Metal rendering driver, and only the Mobile renderer is supported for now. You can initialize this interface in the [method Node._ready] method of any of your nodes as follows:
 		[codeblock]
 		func _ready() -> void:
@@ -21,6 +22,8 @@
 		Do not initialize the XR interface in the [method Node._process] method, as this will initialize it at some unspecified point in the middle of the frame rendering, possibly causing incorrect visionOS API usage.
 		Enable the hand tracking module with the [member ProjectSettings.xr/visionos/enable_hand_tracking] project setting. It will populate the [code]"/user/hand_tracker/left"[/code] and [code]"/user/hand_tracker/right"[/code] XRHandTrackers.
 		Enable the spatial controller module using the [member ProjectSettings.xr/visionos/enable_controller_tracking] project setting. It will populate the [code]"left_hand"[/code] and [code]"right_hand"[/code] reserved XRController trackers.
+		[b]Hand gestures:[/b] ARKit does not report gestures directly, so pinch and grasp are derived from joint positions. The [code]/user/hand_tracker/left[/code] and [code]/user/hand_tracker/right[/code] [XRHandTracker]s always carry [code]pinch[/code], [code]pinch_click[/code], [code]grasp[/code], and [code]grasp_click[/code] inputs. Those gestures are also mirrored onto the [code]left_hand[/code] and [code]right_hand[/code] [XRControllerTracker]s as [code]trigger[/code]/[code]trigger_click[/code] and [code]grip[/code]/[code]grip_click[/code], so gameplay built on [XRController3D] works without a physical accessory. A hand that has a spatial controller attached is driven by that controller instead.
+		[b]Scene understanding:[/b] enable plane detection, scene reconstruction, or world anchors with the [code]xr/visionos/scene_understanding/*[/code] project settings. Detected geometry is exposed through [VisionOSPlaneTracker] and [VisionOSMeshTracker], and anchors through [VisionOSAnchorTracker] and the [VisionOSSpatialAnchorCapability] singleton. These require the world sensing authorization.
 	</description>
 	<tutorials>
 	</tutorials>
