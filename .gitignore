@@ -66,6 +66,11 @@ tests/data/crypto/out*
 *.ox
 *.Plo
 *.so
+# Swift generated, emitted next to the build output by the Swift builder
+*.abi.json
+*.swiftdoc
+*.swiftmodule
+*.swiftsourceinfo
 # Binutils tmp linker output of the form "stXXXXXX" where "X" is alphanumeric
 st[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]
 
