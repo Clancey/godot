@@ -44,6 +44,8 @@
 #include "core/os/thread.h"
 #include "core/string/print_string.h"
 #include "drivers/metal/metal3_objects.h"
+#include "scene/main/scene_tree.h"
+#include "scene/main/window.h"
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_server.h" // ERR_NOT_ON_RENDER_THREAD_V
 #include "servers/rendering/rendering_server_globals.h"
@@ -215,6 +217,9 @@ bool VisionOSXRInterface::initialize() {
 
 	initialized = true;
 
+	// Apply the passthrough transparency implied by the initial immersion style.
+	update_transparent_background();
+
 	print_verbose(String("VisionOSXRInterface initialized with:") + " compositorservices=" + (cs.enabled ? "yes" : "no") + " hands=" + (hands.enabled ? "yes" : "no") + " controllers=" + (controllers.enabled ? "yes" : "no") + " scene_understanding=" + (scene_understanding.enabled() ? "yes" : "no"));
 
 	return initialized;
@@ -359,6 +364,53 @@ bool VisionOSXRInterface::set_play_area_mode(XRInterface::PlayAreaMode p_mode) {
 	return p_mode == XR_PLAY_AREA_ROOMSCALE;
 }
 
+Array VisionOSXRInterface::get_supported_environment_blend_modes() {
+	Array modes;
+	modes.push_back(XR_ENV_BLEND_MODE_OPAQUE);
+	modes.push_back(XR_ENV_BLEND_MODE_ALPHA_BLEND);
+	return modes;
+}
+
+XRInterface::EnvironmentBlendMode VisionOSXRInterface::get_environment_blend_mode() const {
+	// The blend mode is a portable view of the immersion style, so reading it live
+	// keeps it correct when the style is changed at runtime.
+	return get_current_immersion_style() == IMMERSION_STYLE_FULL ? XR_ENV_BLEND_MODE_OPAQUE : XR_ENV_BLEND_MODE_ALPHA_BLEND;
+}
+
+bool VisionOSXRInterface::set_environment_blend_mode(XRInterface::EnvironmentBlendMode p_mode) {
+	switch (p_mode) {
+		case XR_ENV_BLEND_MODE_OPAQUE:
+			set_immersion_style(IMMERSION_STYLE_FULL);
+			return true;
+		case XR_ENV_BLEND_MODE_ALPHA_BLEND:
+			// Progressive immersion already shows passthrough, so leave it alone
+			// rather than collapsing it to mixed.
+			if (get_current_immersion_style() != IMMERSION_STYLE_PROGRESSIVE) {
+				set_immersion_style(IMMERSION_STYLE_MIXED);
+			}
+			update_transparent_background();
+			return true;
+		default:
+			return false;
+	}
+}
+
+void VisionOSXRInterface::update_transparent_background() {
+	if (get_environment_blend_mode() != XR_ENV_BLEND_MODE_ALPHA_BLEND) {
+		return;
+	}
+
+	// CompositorServices composites passthrough where alpha is 0. Without a
+	// transparent viewport the cleared background stays opaque and shows up as
+	// blocky artifacts around anything rendered in front of passthrough.
+	SceneTree *scene_tree = SceneTree::get_singleton();
+	Window *root = scene_tree != nullptr ? scene_tree->get_root() : nullptr;
+	if (root != nullptr && !root->has_transparent_background()) {
+		root->set_transparent_background(true);
+		print_verbose("VisionOSXRInterface: enabled transparent background for passthrough compositing.");
+	}
+}
+
 float VisionOSXRInterface::get_current_render_quality() {
 	return cp_layer_renderer_get_render_quality(cs.layer_renderer);
 }
@@ -371,6 +423,10 @@ void VisionOSXRInterface::set_current_render_quality(float p_render_quality) {
 }
 
 VisionOSXRInterface::ImmersionStyle VisionOSXRInterface::get_immersion_style() {
+	return get_current_immersion_style();
+}
+
+VisionOSXRInterface::ImmersionStyle VisionOSXRInterface::get_current_immersion_style() const {
 	switch (GDTAppDelegateServiceVisionOS.immersionStyle) {
 		case GDTImmersionStyleFull:
 			return IMMERSION_STYLE_FULL;
@@ -395,6 +451,8 @@ void VisionOSXRInterface::set_immersion_style(ImmersionStyle p_immersion_style) 
 			GDTAppDelegateServiceVisionOS.immersionStyle = GDTImmersionStyleProgressive;
 			break;
 	}
+
+	update_transparent_background();
 }
 
 VisionOSXRInterface::Visibility VisionOSXRInterface::get_upper_limb_visibility() {
