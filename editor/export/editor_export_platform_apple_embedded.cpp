@@ -871,28 +871,37 @@ struct CodesignData {
 };
 
 Error EditorExportPlatformAppleEmbedded::_codesign(String p_file, void *p_userdata) {
-	if (p_file.ends_with(".dylib")) {
-		CodesignData *data = static_cast<CodesignData *>(p_userdata);
-		print_line(String("Signing ") + p_file);
-
-		String sign_id;
-		if (data->debug) {
-			sign_id = data->preset->get("application/code_sign_identity_debug").operator String().is_empty() ? "Apple Development" : data->preset->get("application/code_sign_identity_debug");
-		} else {
-			sign_id = data->preset->get("application/code_sign_identity_release").operator String().is_empty() ? "Apple Distribution" : data->preset->get("application/code_sign_identity_release");
-		}
-
-		List<String> codesign_args;
-		codesign_args.push_back("-f");
-		codesign_args.push_back("-s");
-		codesign_args.push_back(sign_id);
-		codesign_args.push_back(p_file);
-		String str;
-		Error err = OS::get_singleton()->execute("codesign", codesign_args, &str, nullptr, true);
-		print_verbose("codesign (" + p_file + "):\n" + str);
-
-		return err;
+	// Frameworks are signed as a bundle, so the Info.plist marks the directory to sign.
+	const bool is_framework = p_file.ends_with(".framework/Info.plist");
+	if (!is_framework && !p_file.ends_with(".dylib")) {
+		return OK;
 	}
+
+	CodesignData *data = static_cast<CodesignData *>(p_userdata);
+	const String target = is_framework ? p_file.get_base_dir() : p_file;
+
+	print_line(String("Signing ") + target);
+
+	String sign_id;
+	if (data->debug) {
+		sign_id = data->preset->get("application/code_sign_identity_debug").operator String().is_empty() ? "Apple Development" : data->preset->get("application/code_sign_identity_debug");
+	} else {
+		sign_id = data->preset->get("application/code_sign_identity_release").operator String().is_empty() ? "Apple Distribution" : data->preset->get("application/code_sign_identity_release");
+	}
+
+	List<String> codesign_args;
+	codesign_args.push_back("-f");
+	codesign_args.push_back("-s");
+	codesign_args.push_back(sign_id);
+	codesign_args.push_back(target);
+
+	int exit_code = 0;
+	String str;
+	Error err = OS::get_singleton()->execute("codesign", codesign_args, &str, &exit_code, true);
+	print_verbose("codesign (" + target + "):\n" + str);
+	ERR_FAIL_COND_V_MSG(err != OK, err, vformat("Could not run codesign for \"%s\".", target));
+	ERR_FAIL_COND_V_MSG(exit_code != 0, ERR_CANT_CREATE, vformat("Failed to code-sign \"%s\":\n%s", target, str));
+
 	return OK;
 }
 
@@ -1121,6 +1130,27 @@ Error EditorExportPlatformAppleEmbedded::_convert_to_framework(const String &p_s
 				f->store_string(info_plist);
 			}
 		}
+
+#ifdef MACOS_ENABLED
+		// Re-sign the converted framework ad-hoc, so its embedded signature identifier
+		// is regenerated from the Info.plist we just wrote. Without this the bundle
+		// carries the identifier of the original dylib and is rejected at install time.
+		{
+			List<String> codesign_args;
+			codesign_args.push_back("-f");
+			codesign_args.push_back("-s");
+			codesign_args.push_back("-");
+			codesign_args.push_back(p_destination);
+
+			int exit_code = 0;
+			String str;
+			Error err = OS::get_singleton()->execute("codesign", codesign_args, &str, &exit_code, true);
+			print_verbose("codesign (" + p_destination + "):\n" + str);
+			if (err != OK || exit_code != 0) {
+				WARN_PRINT(vformat("Could not ad-hoc sign framework \"%s\". It will be signed again with the export identity.", p_destination));
+			}
+		}
+#endif
 	}
 
 	return OK;
