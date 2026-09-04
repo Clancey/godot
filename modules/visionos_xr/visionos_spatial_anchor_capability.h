@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  register_types.mm                                                     */
+/*  visionos_spatial_anchor_capability.h                                  */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,69 +28,49 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+#pragma once
+
 #ifdef VISIONOS_ENABLED
 
-#include "register_types.h"
-
 #include "visionos_anchor_tracker.h"
-#include "visionos_mesh_tracker.h"
-#include "visionos_plane_tracker.h"
-#include "visionos_spatial_anchor_capability.h"
-#include "visionos_xr_interface.h"
 
-#include "core/config/engine.h"
-#include "core/object/class_db.h"
+#include "core/object/ref_counted.h"
 
-Ref<VisionOSXRInterface> visionos_xr;
-VisionOSSpatialAnchorCapability *visionos_anchor_capability = nullptr;
+class VisionOSSceneUnderstanding;
 
-void initialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
+class VisionOSSpatialAnchorCapability : public Object {
+	GDCLASS(VisionOSSpatialAnchorCapability, Object);
 
-	GDREGISTER_CLASS(VisionOSXRInterface);
-	GDREGISTER_CLASS(VisionOSPlaneTracker);
-	GDREGISTER_CLASS(VisionOSMeshTracker);
-	GDREGISTER_CLASS(VisionOSAnchorTracker);
-	GDREGISTER_CLASS(VisionOSSpatialAnchorCapability);
+public:
+	static VisionOSSpatialAnchorCapability *get_singleton();
 
-	// Exposed as a singleton, mirroring OpenXRSpatialAnchorCapability.
-	visionos_anchor_capability = memnew(VisionOSSpatialAnchorCapability);
-	Engine::get_singleton()->add_singleton(Engine::Singleton("VisionOSSpatialAnchorCapability", visionos_anchor_capability));
+	VisionOSSpatialAnchorCapability();
+	~VisionOSSpatialAnchorCapability();
 
-	if (XRServer::get_singleton()) {
-		visionos_xr.instantiate();
-		visionos_anchor_capability->set_scene_understanding(visionos_xr->get_scene_understanding());
-		XRServer::get_singleton()->add_interface(visionos_xr);
-	}
-}
+	void set_scene_understanding(VisionOSSceneUnderstanding *p_scene_understanding);
 
-void uninitialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
+	// Mirrors OpenXRSpatialAnchorCapability API
+	bool is_spatial_anchor_supported();
+	bool is_spatial_persistence_supported();
 
-	if (visionos_xr.is_valid()) {
-		// uninitialize our interface if it is initialized
-		if (visionos_xr->is_initialized()) {
-			visionos_xr->uninitialize();
-		}
+	Ref<VisionOSAnchorTracker> create_new_anchor(const Transform3D &p_transform);
+	void remove_anchor(Ref<VisionOSAnchorTracker> p_anchor_tracker);
 
-		// unregister our interface from the XR server
-		if (XRServer::get_singleton()) {
-			XRServer::get_singleton()->remove_interface(visionos_xr);
-		}
+	// Persistence - visionOS world anchors are automatically persistent,
+	// so persist is a no-op that fires the callback, and unpersist removes the anchor.
+	void persist_anchor(Ref<VisionOSAnchorTracker> p_anchor_tracker, const Callable &p_user_callback = Callable());
+	void unpersist_anchor(Ref<VisionOSAnchorTracker> p_anchor_tracker, const Callable &p_user_callback = Callable());
 
-		// and release
-		visionos_xr.unref();
-	}
+	// visionOS-specific: SharePlay shared anchors
+	bool is_sharing_available();
+	Ref<VisionOSAnchorTracker> create_shared_anchor(const Transform3D &p_transform);
 
-	if (visionos_anchor_capability != nullptr) {
-		Engine::get_singleton()->remove_singleton("VisionOSSpatialAnchorCapability");
-		memdelete(visionos_anchor_capability);
-		visionos_anchor_capability = nullptr;
-	}
-}
+protected:
+	static void _bind_methods();
+
+private:
+	static VisionOSSpatialAnchorCapability *singleton;
+	VisionOSSceneUnderstanding *scene_understanding = nullptr;
+};
 
 #endif // VISIONOS_ENABLED
