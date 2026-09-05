@@ -94,7 +94,14 @@ void VisionOSControllerTracking::init_for_controller(GCController *p_controller)
 	ar_accessory_load_from_device(
 			p_controller,
 			^(id<GCDevice> _Nonnull device, bool success, ar_error_t _Nullable error, ar_accessory_t _Nullable accessory) {
-				ERR_FAIL_COND_MSG(!success, "Error loading from GCDevice...");
+				// Controllers that are not spatial accessories fail to load here, which is an
+				// ordinary configuration rather than an error: the simulator always presents a
+				// synthetic gamepad, and an ordinary MFi controller may be paired to a device.
+				// Such a controller is simply not tracked as an accessory.
+				if (!success) {
+					print_verbose("visionOS: ignoring controller that is not a spatial accessory.");
+					return;
+				}
 
 				dispatch_async(dispatch_get_main_queue(), ^{
 					ar_accessory_chirality_t chirality = ar_accessory_get_inherent_chirality(accessory);
