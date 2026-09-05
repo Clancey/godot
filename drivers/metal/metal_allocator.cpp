@@ -30,6 +30,8 @@
 
 #include "drivers/metal/metal_allocator.h"
 
+#include <TargetConditionals.h>
+
 namespace {
 
 class SpinLockGuard {
@@ -301,6 +303,18 @@ MetalBuffer MetalHeapAllocator::new_buffer(NS::UInteger p_length, MTL::ResourceO
 
 	MetalBuffer result;
 	MTL::Heap *heap = nullptr;
+
+#if TARGET_OS_SIMULATOR
+	// Simulator devices only accept private storage for placement heaps, so shared
+	// allocations are created as committed resources instead. The allocation is
+	// left INVALID, which _free_allocation() ignores, leaving the resource itself
+	// to release the memory.
+	if (pool_index != POOL_PRIVATE) {
+		result.buffer = NS::TransferPtr(device->newBuffer(p_length, p_options));
+		return result;
+	}
+#endif
+
 	if (sa.size > _preferred_block_size(pool_index) / 2) {
 		if (!_dedicated_allocate(pool_index, sa.size, result.allocation, heap)) {
 			return result;
@@ -325,6 +339,15 @@ MetalTexture MetalHeapAllocator::new_texture(const MTL::TextureDescriptor *p_des
 
 	MetalTexture result;
 	MTL::Heap *heap = nullptr;
+
+#if TARGET_OS_SIMULATOR
+	// See new_buffer(): shared placement heaps are unavailable on the simulator.
+	if (pool_index != POOL_PRIVATE) {
+		result.texture = NS::TransferPtr(device->newTexture(p_desc));
+		return result;
+	}
+#endif
+
 	if (sa.size > _preferred_block_size(pool_index) / 2) {
 		if (!_dedicated_allocate(pool_index, sa.size, result.allocation, heap)) {
 			return result;
