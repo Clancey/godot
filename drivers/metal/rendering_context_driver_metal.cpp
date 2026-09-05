@@ -28,6 +28,8 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+#pragma once
+
 #include "rendering_context_driver_metal.h"
 
 #include "core/os/os.h"
@@ -254,7 +256,11 @@ public:
 		front = (front + 1) % frame_buffers.size();
 
 		if (drawable != nullptr) {
-			if (vsync_mode != DisplayServerEnums::VSYNC_DISABLED) {
+			// Simulator command buffers do not implement
+			// presentDrawable:afterMinimumDuration:, so the frame is presented without
+			// a minimum duration there. Simulators do not drive a real display, so the
+			// pacing this provides is not meaningful anyway.
+			if (vsync_mode != DisplayServerEnums::VSYNC_DISABLED && !TARGET_OS_SIMULATOR) {
 				p_cmd_buffer->get_command_buffer()->presentDrawableAfterMinimumDuration(drawable, present_minimum_duration);
 			} else {
 				p_cmd_buffer->get_command_buffer()->presentDrawable(drawable);

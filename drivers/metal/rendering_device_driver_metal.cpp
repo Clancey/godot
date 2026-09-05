@@ -28,6 +28,8 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+#pragma once
+
 /**************************************************************************/
 /*                                                                        */
 /* Portions of this code were derived from MoltenVK.                      */
@@ -110,9 +112,17 @@ static_assert(ENUM_MEMBERS_EQUAL(RDD::COMPARE_OP_ALWAYS, MTL::CompareFunctionAlw
 /*****************/
 
 RDD::BufferID RenderingDeviceDriverMetal::buffer_create(uint64_t p_size, BitField<BufferUsageBits> p_usage, MemoryAllocationType p_allocation_type, uint64_t p_frames_drawn) {
-	const uint64_t original_size = p_size;
+	// Uniform buffers are bound at an offset, which Metal requires to be aligned to
+	// minUniformBufferOffsetAlignment, so the allocation is padded to match.
+	uint64_t alignment = 16u;
+	if (p_usage.has_flag(BUFFER_USAGE_UNIFORM_BIT)) {
+		alignment = MAX(alignment, device_properties->limits.minUniformBufferOffsetAlignment);
+	}
+
+	const uint64_t original_size = round_up_to_alignment(p_size, alignment);
+	p_size = original_size;
 	if (p_usage.has_flag(BUFFER_USAGE_DYNAMIC_PERSISTENT_BIT)) {
-		p_size = round_up_to_alignment(p_size, 16u) * _frame_count;
+		p_size = original_size * _frame_count;
 	}
 
 	MTL::ResourceOptions options = 0;
@@ -703,6 +713,9 @@ BitField<RDD::TextureUsageBits> RenderingDeviceDriverMetal::texture_get_usages_s
 	}
 	if (!flags::any(caps, kMTLFmtCapsRead)) {
 		supported.clear_flag(TEXTURE_USAGE_SAMPLING_BIT);
+	}
+	if (!flags::any(caps, kMTLFmtCapsWrite)) {
+		supported.clear_flag(TEXTURE_USAGE_STORAGE_BIT);
 	}
 	if (!flags::any(caps, kMTLFmtCapsAtomic)) {
 		supported.clear_flag(TEXTURE_USAGE_STORAGE_ATOMIC_BIT);
@@ -3055,6 +3068,12 @@ Error RenderingDeviceDriverMetal::_initialize(uint32_t p_device_index, uint32_t 
 	}
 
 	// The Metal renderer requires Apple4 family. This is 2017 era A11 chips and newer.
+	//
+	// Simulator devices under-report their GPU family: supportsFamily() returns false
+	// for families whose functionality the simulator actually implements. The feature
+	// flags are left as reported, only this fatal check is skipped, so anything that
+	// genuinely depends on a capability still consults its own flag.
+#if !TARGET_OS_SIMULATOR
 	if (device_properties->features.highestFamily < MTL::GPUFamilyApple4) {
 		String error_string = vformat("Your Apple GPU does not support the following features, which are required to use Metal-based renderers in Godot:\n\n");
 		if (!device_properties->features.imageCubeArray) {
@@ -3070,6 +3089,7 @@ Error RenderingDeviceDriverMetal::_initialize(uint32_t p_device_index, uint32_t 
 
 		return ERR_CANT_CREATE;
 	}
+#endif
 
 	return OK;
 }

@@ -28,6 +28,8 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+#pragma once
+
 /**************************************************************************/
 /*                                                                        */
 /* Portions of this code were derived from MoltenVK.                      */
@@ -932,6 +934,10 @@ void PixelFormats::modifyMTLFormatCapabilities(const MetalFeatures &p_feat) {
 
 	// RGB9E5Float cannot be used as a render target on the simulator.
 	disableMTLPixFmtCapsIf(TARGET_OS_SIMULATOR, RGB9E5Float, ColorAtt);
+
+	// Simulator runtimes reject shader writes to packed 10:10:10:2 unorm textures.
+	disableMTLPixFmtCapsIf(TARGET_OS_SIMULATOR, RGB10A2Unorm, Write);
+	disableMTLPixFmtCapsIf(TARGET_OS_SIMULATOR, BGR10A2Unorm, Write);
 
 	setMTLPixFmtCapsIf(iosOnly6, RG32Uint, RWC);
 	setMTLPixFmtCapsIf(iosOnly6, RG32Sint, RWC);
