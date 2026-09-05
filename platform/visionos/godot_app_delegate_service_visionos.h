@@ -56,6 +56,7 @@ typedef NS_ENUM(NSInteger, GDTVisibility) {
 @interface GDTAppDelegateServiceVisionOS : GDTAppDelegateService
 
 @property(class, nonatomic, assign) GDTRenderMode renderMode;
+@property(class, nonatomic, assign, readonly) BOOL hasImmersiveScene;
 @property(class, nonatomic, weak, nullable) cp_layer_renderer_t layerRenderer;
 @property(class, nonatomic, strong, nullable) cp_layer_renderer_capabilities_t layerRendererCapabilities;
 
