@@ -58,6 +58,8 @@ struct VisionOSControllerTracking {
 	ar_accessories_t accessories = nullptr;
 	ar_accessory_anchor_t left_controller_anchor = nullptr;
 	ar_accessory_anchor_t right_controller_anchor = nullptr;
+	ar_accessory_t left_controller_accessory = nullptr;
+	ar_accessory_t right_controller_accessory = nullptr;
 
 	// Controller state
 	Ref<XRControllerTracker> left_controller_tracker;
@@ -81,6 +83,7 @@ struct VisionOSControllerTracking {
 	void update_accessories_list();
 	void update_controller_trackers_from_arkit(CFTimeInterval p_trackable_anchor_time);
 	void update_controller_from_anchor(Ref<XRControllerTracker> p_controller_tracker, ar_accessory_anchor_t p_controller_anchor, GCController *p_gc_controller);
+	void reset_controller_tracker_data(Ref<XRControllerTracker> p_controller_tracker);
 
 	// Called directly from the same function on the XRInterface
 	void trigger_haptic_pulse(const String &p_action_name, const StringName &p_tracker_name, double p_frequency, double p_amplitude, double p_duration_sec, double p_delay_sec);

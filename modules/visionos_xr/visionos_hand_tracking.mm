@@ -292,6 +292,9 @@ void VisionOSHandTracking::publish_gestures(HandIndex p_hand, const Ref<XRContro
 	const GestureState &state = gestures[p_hand];
 	const Ref<XRHandTracker> &hand_tracker = (p_hand == HAND_LEFT) ? left_hand_tracker : right_hand_tracker;
 
+	// These controller poses come from optical joints, not a physical accessory.
+	p_controller_tracker->set_tracker_profile("visionos_hand_tracking");
+
 	// Map onto the same action names the accessory controllers use, so gameplay
 	// built on XRController3D works with either input source.
 	p_controller_tracker->set_input("trigger", state.pinch_value);

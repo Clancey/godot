@@ -63,6 +63,7 @@ typedef struct ar_session *ar_session_t;
 typedef struct ar_device_anchor *ar_device_anchor_t;
 typedef struct ar_hand_anchor *ar_hand_anchor_t;
 typedef struct ar_accessories *ar_accessories_t;
+typedef struct ar_accessory *ar_accessory_t;
 typedef struct ar_accessory_anchor *ar_accessory_anchor_t;
 #endif // __OBJC__
 
