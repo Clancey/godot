@@ -28,6 +28,8 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+#pragma once
+
 /**************************************************************************/
 /*                                                                        */
 /* Portions of this code were derived from MoltenVK.                      */
@@ -324,14 +326,11 @@ void MetalDeviceProperties::init_limits(MTL::Device *p_device) {
 		limits.maxThreadGroupMemoryAllocation = 16352;
 	}
 
-#if TARGET_OS_IOS && !TARGET_OS_MACCATALYST
-	limits.minUniformBufferOffsetAlignment = 64;
-#endif
-
-#if TARGET_OS_OSX
-	// This is Apple Silicon specific.
-	limits.minUniformBufferOffsetAlignment = 16;
-#endif
+	// Metal constant buffer offsets passed to set{Vertex,Fragment}Buffer must be
+	// 256-byte aligned. Using that value everywhere keeps this correct on all Apple
+	// platforms; the previous per-platform values left it unset on visionOS, whose
+	// TargetConditionals match neither TARGET_OS_IOS nor TARGET_OS_OSX.
+	limits.minUniformBufferOffsetAlignment = 256;
 
 	limits.maxDrawIndexedIndexValue = std::numeric_limits<uint32_t>::max() - 1;
 
