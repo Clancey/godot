@@ -24,6 +24,7 @@
 
 #include "MTLDefines.hpp"
 
+#include <TargetConditionals.h>
 #include <objc/runtime.h>
 
 //-------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -71,7 +72,11 @@ namespace MTL::Private
     }
 } // MTL::Private
 
-#if defined(__MAC_26_0) || defined(__IPHONE_26_0) || defined(__TVOS_26_0)
+// Apple simulator runtimes do not export every Metal constant that the device
+// frameworks do (for example MTLIOErrorDomain and MTLTensorDomain), so binding
+// them directly fails to link. Fall back to the dynamic lookup below, which
+// resolves them at runtime and tolerates their absence.
+#if (defined(__MAC_26_0) || defined(__IPHONE_26_0) || defined(__TVOS_26_0)) && !TARGET_OS_SIMULATOR
 
 #define _MTL_PRIVATE_DEF_STR(type, symbol)                  \
     _MTL_EXTERN type const MTL##symbol _MTL_PRIVATE_IMPORT; \
