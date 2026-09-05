@@ -82,6 +82,8 @@ void VisionOSControllerTracking::uninitialize(XRServer *p_xr_server) {
 
 	left_controller_anchor = nullptr;
 	right_controller_anchor = nullptr;
+	left_controller_accessory = nullptr;
+	right_controller_accessory = nullptr;
 	left_gc_controller = nullptr;
 	right_gc_controller = nullptr;
 	left_haptic_engine = nullptr;
@@ -104,15 +106,24 @@ void VisionOSControllerTracking::init_for_controller(GCController *p_controller)
 				}
 
 				dispatch_async(dispatch_get_main_queue(), ^{
+					if (![GCController.controllers containsObject:p_controller] || left_controller_tracker.is_null() || right_controller_tracker.is_null()) {
+						return;
+					}
 					ar_accessory_chirality_t chirality = ar_accessory_get_inherent_chirality(accessory);
 					if (chirality == ar_accessory_chirality_left) {
 						left_gc_controller = p_controller;
+						left_controller_accessory = accessory;
+						reset_controller_tracker_data(left_controller_tracker);
+						left_controller_tracker->set_tracker_profile("visionos_accessory");
 						if (left_gc_controller != nullptr && left_gc_controller.haptics != nullptr) {
 							left_haptic_engine = [left_gc_controller.haptics createEngineWithLocality:GCHapticsLocalityDefault];
 						}
 						ar_accessories_add_accessory(accessories, accessory);
 					} else if (chirality == ar_accessory_chirality_right) {
 						right_gc_controller = p_controller;
+						right_controller_accessory = accessory;
+						reset_controller_tracker_data(right_controller_tracker);
+						right_controller_tracker->set_tracker_profile("visionos_accessory");
 						if (right_gc_controller != nullptr && right_gc_controller.haptics != nullptr) {
 							right_haptic_engine = [right_gc_controller.haptics createEngineWithLocality:GCHapticsLocalityDefault];
 						}
@@ -147,27 +158,27 @@ void VisionOSControllerTracking::setup_controller_notifications() {
 
 void VisionOSControllerTracking::handle_controller_disconnect(GCController *p_controller) {
 	if (left_gc_controller != nullptr && left_gc_controller == p_controller) {
-		if (left_controller_anchor != nullptr) {
-			ar_accessory_t accessory_left = ar_accessory_anchor_get_accessory(left_controller_anchor);
-			if (accessory_left != nullptr) {
-				ar_accessories_remove_accessory(accessories, accessory_left);
-				left_controller_anchor = nullptr;
-				left_gc_controller = nullptr;
-				left_haptic_engine = nullptr;
-				update_accessories_list();
-			}
+		if (left_controller_accessory != nullptr) {
+			ar_accessories_remove_accessory(accessories, left_controller_accessory);
 		}
+		left_controller_accessory = nullptr;
+		left_controller_anchor = nullptr;
+		left_gc_controller = nullptr;
+		left_haptic_engine = nullptr;
+		reset_controller_tracker_data(left_controller_tracker);
+		left_controller_tracker->set_tracker_profile("");
+		update_accessories_list();
 	} else if (right_gc_controller != nullptr && right_gc_controller == p_controller) {
-		if (right_controller_anchor != nullptr) {
-			ar_accessory_t accessory_right = ar_accessory_anchor_get_accessory(right_controller_anchor);
-			if (accessory_right != nullptr) {
-				ar_accessories_remove_accessory(accessories, accessory_right);
-				right_controller_anchor = nullptr;
-				right_gc_controller = nullptr;
-				right_haptic_engine = nullptr;
-				update_accessories_list();
-			}
+		if (right_controller_accessory != nullptr) {
+			ar_accessories_remove_accessory(accessories, right_controller_accessory);
 		}
+		right_controller_accessory = nullptr;
+		right_controller_anchor = nullptr;
+		right_gc_controller = nullptr;
+		right_haptic_engine = nullptr;
+		reset_controller_tracker_data(right_controller_tracker);
+		right_controller_tracker->set_tracker_profile("");
+		update_accessories_list();
 	}
 }
 
@@ -250,6 +261,24 @@ void process_thumbstick(GCControllerLiveInput *input, Ref<XRControllerTracker> c
 
 } // namespace
 
+void VisionOSControllerTracking::reset_controller_tracker_data(Ref<XRControllerTracker> p_controller_tracker) {
+	if (p_controller_tracker.is_null()) {
+		return;
+	}
+	for (const PoseMapping &mapping : pose_mappings) {
+		p_controller_tracker->invalidate_pose(mapping.action_name);
+	}
+	for (const ButtonMapping &mapping : button_mappings) {
+		if (mapping.action_name_float) {
+			p_controller_tracker->set_input(mapping.action_name_float, 0.0f);
+		}
+		if (mapping.action_name_bool) {
+			p_controller_tracker->set_input(mapping.action_name_bool, false);
+		}
+	}
+	p_controller_tracker->set_input("primary", Vector2());
+}
+
 void VisionOSControllerTracking::update_controller_from_anchor(Ref<XRControllerTracker> p_controller_tracker,
 		ar_accessory_anchor_t p_controller_anchor, GCController *p_gc_controller) {
 	simd_float4x4 origin_from_controller_anchor_simd = ar_anchor_get_origin_from_anchor_transform(p_controller_anchor);
@@ -302,17 +331,24 @@ void VisionOSControllerTracking::update_controller_trackers_from_arkit(CFTimeInt
 				ar_accessory_t accessory = ar_accessory_anchor_get_accessory(accessory_anchor);
 				ar_accessory_chirality_t chirality = ar_accessory_get_inherent_chirality(accessory);
 
-				if (chirality == ar_accessory_chirality_left && !left_found) {
+				if (chirality == ar_accessory_chirality_left && left_gc_controller != nullptr && !left_found) {
 					left_controller_anchor = accessory_anchor;
 					update_controller_from_anchor(left_controller_tracker, left_controller_anchor, left_gc_controller);
 					left_found = true;
-				} else if (chirality == ar_accessory_chirality_right && !right_found) {
+				} else if (chirality == ar_accessory_chirality_right && right_gc_controller != nullptr && !right_found) {
 					right_controller_anchor = accessory_anchor;
 					update_controller_from_anchor(right_controller_tracker, right_controller_anchor, right_gc_controller);
 					right_found = true;
 				}
 				return true;
 			});
+		}
+		// Do not invalidate the other hand's optical mirror.
+		if (left_gc_controller != nullptr && !left_found) {
+			reset_controller_tracker_data(left_controller_tracker);
+		}
+		if (right_gc_controller != nullptr && !right_found) {
+			reset_controller_tracker_data(right_controller_tracker);
 		}
 	}
 }
