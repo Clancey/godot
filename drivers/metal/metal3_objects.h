@@ -549,8 +549,9 @@ public:
 		}
 	} blit;
 
-	_FORCE_INLINE_ MTL::CommandBuffer *get_command_buffer() const {
-		return commandBuffer.get();
+	_FORCE_INLINE_ MTL::CommandBuffer *get_command_buffer() {
+		// Presentation or fence signaling may be the first work encoded in this buffer.
+		return command_buffer();
 	}
 
 	void _begin() override;
