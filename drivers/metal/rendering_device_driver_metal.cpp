@@ -330,6 +330,19 @@ RDD::TextureID RenderingDeviceDriverMetal::texture_create(const TextureFormat &p
 	static MTL::TextureSwizzleChannels IDENTITY_SWIZZLE = MTL::TextureSwizzleChannels::Default();
 
 	bool no_swizzle = memcmp(&IDENTITY_SWIZZLE, &swizzle, sizeof(MTL::TextureSwizzleChannels)) == 0;
+
+#if TARGET_OS_SIMULATOR
+	// Simulator Metal validation rejects a swizzled texture that is also shader
+	// writable. The swizzle is dropped rather than the write usage: a texture that
+	// cannot be written breaks any compute shader targeting it, whereas losing the
+	// swizzle only changes how its channels are read back. Vulkan requires identity
+	// swizzle for storage images for the same reason, so this matches the behaviour
+	// portable code already has to assume.
+	if (!no_swizzle && (p_format.usage_bits & TEXTURE_USAGE_STORAGE_BIT)) {
+		no_swizzle = true;
+	}
+#endif
+
 	if (!no_swizzle) {
 		desc->setSwizzle(swizzle);
 	}
