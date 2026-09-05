@@ -41,7 +41,23 @@ static GDTRenderMode _renderMode = GDTRenderModeWindowed;
 static __weak cp_layer_renderer_t _layerRenderer = nil;
 static __strong cp_layer_renderer_capabilities_t _layerRendererCapabilities = nil;
 
-@implementation GDTAppDelegateServiceVisionOS
+static bool is_immersive_scene(UIScene *scene) {
+	return [scene.session.role isEqualToString:UISceneSessionRoleImmersiveSpaceApplication] ||
+			[scene.session.role isEqualToString:@"CPSceneSessionRoleImmersiveSpaceApplication"];
+}
+
+@implementation GDTAppDelegateServiceVisionOS {
+	BOOL _immersiveSceneInBackground;
+}
+
++ (BOOL)hasImmersiveScene {
+	for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+		if (is_immersive_scene(scene) && scene.activationState != UISceneActivationStateUnattached) {
+			return YES;
+		}
+	}
+	return NO;
+}
 
 + (GDTRenderMode)renderMode {
 	return _renderMode;
@@ -128,6 +144,14 @@ static __strong cp_layer_renderer_capabilities_t _layerRendererCapabilities = ni
 }
 
 - (void)sceneDidBecomeActive:(UIScene *)scene API_AVAILABLE(ios(13.0), tvos(13.0), visionos(1.0)) {
+	if (_renderMode == GDTRenderModeCompositorServices && !is_immersive_scene(scene)) {
+		return;
+	}
+	if (_renderMode == GDTRenderModeCompositorServices && _immersiveSceneInBackground) {
+		// Immersive scenes may omit sceneWillEnterForeground:.
+		OS_AppleEmbedded::get_singleton()->on_exit_background();
+		_immersiveSceneInBackground = NO;
+	}
 	[super sceneDidBecomeActive:scene];
 
 	// On Compositor Services scenes, sceneDidBecomeActive: is called too soon when
@@ -135,9 +159,44 @@ static __strong cp_layer_renderer_capabilities_t _layerRendererCapabilities = ni
 	// again after a short delay so audio resumes correctly.
 	if (_renderMode == GDTRenderModeCompositorServices) {
 		dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-			OS_AppleEmbedded::get_singleton()->audio_driver_start();
+			if (scene.activationState == UISceneActivationStateForegroundActive && OS_AppleEmbedded::get_singleton()) {
+				OS_AppleEmbedded::get_singleton()->audio_driver_start();
+			}
 		});
 	}
+}
+
+// Auxiliary launcher windows do not own the immersive engine's focus or pause state.
+// Immersive scene and application callbacks still handle genuine backgrounding.
+- (void)sceneDidDisconnect:(UIScene *)scene {
+	if (_renderMode == GDTRenderModeCompositorServices && !is_immersive_scene(scene)) {
+		return;
+	}
+	[super sceneDidDisconnect:scene];
+}
+
+- (void)sceneWillEnterForeground:(UIScene *)scene {
+	if (_renderMode == GDTRenderModeCompositorServices && !is_immersive_scene(scene)) {
+		return;
+	}
+	[super sceneWillEnterForeground:scene];
+}
+
+- (void)sceneWillResignActive:(UIScene *)scene {
+	if (_renderMode == GDTRenderModeCompositorServices && !is_immersive_scene(scene)) {
+		return;
+	}
+	[super sceneWillResignActive:scene];
+}
+
+- (void)sceneDidEnterBackground:(UIScene *)scene {
+	if (_renderMode == GDTRenderModeCompositorServices && !is_immersive_scene(scene)) {
+		return;
+	}
+	if (_renderMode == GDTRenderModeCompositorServices) {
+		_immersiveSceneInBackground = YES;
+	}
+	[super sceneDidEnterBackground:scene];
 }
 
 @end

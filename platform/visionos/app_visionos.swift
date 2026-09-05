@@ -62,9 +62,21 @@ final class RendererTaskExecutor: TaskExecutor {
 final class Model {
 	static let shared = Model()
 
+	enum ImmersiveSpaceState {
+		case closed, opening, open
+	}
+
 	var immersionStyle: any ImmersionStyle
 	var upperLimbVisibility: Visibility = .automatic
 	var persistentSystemOverlays: Visibility = .automatic
+
+	var immersiveSpaceState: ImmersiveSpaceState = .closed
+	var didRequestImmersiveSpace = false
+	var immersiveSpaceError: String?
+
+	// Engine setup belongs to the process, not to a SwiftUI scene instance.
+	var renderer: GDTCompositorServicesRenderer?
+	var didSetUpRenderer = false
 
 	private init() {
 		immersionStyle = Self.readInitialImmersionStyleFromInfoPlist()
@@ -113,6 +125,82 @@ public final class GDTSwiftBridge: NSObject {
 	@objc public class var persistentSystemOverlays: GDTVisibility {
 		get { GDTVisibility(fromSwiftUIType: Model.shared.persistentSystemOverlays) }
 		set { Model.shared.persistentSystemOverlays = newValue.swiftUI }
+	}
+}
+
+// MARK: Immersive Launcher
+
+struct ImmersiveLauncher: View {
+	@Environment(\.openImmersiveSpace) private var openImmersiveSpace
+	@Environment(\.scenePhase) private var scenePhase
+
+	private let model: Model = .shared
+
+	private func enterImmersiveSpace() async {
+		guard model.immersiveSpaceState == .closed else { return }
+		model.didRequestImmersiveSpace = true
+		model.immersiveSpaceError = nil
+
+		// The preferred scene role may already be connecting the immersive scene.
+		// Do not enter the pending state without a request that can complete it.
+		guard !GDTAppDelegateServiceVisionOS.hasImmersiveScene && model.renderer == nil else {
+			model.immersiveSpaceError = "An immersive scene is already connecting or closing. Please try again shortly."
+			NSLog("visionOS immersive space request deferred while a scene or renderer is still present")
+			return
+		}
+
+		model.immersiveSpaceState = .opening
+		NSLog("visionOS requesting immersive space")
+		switch await openImmersiveSpace(id: "ImmersiveSpace") {
+		case .opened:
+			// The compositor callback owns renderer readiness and the open state.
+			NSLog("visionOS immersive space request opened")
+		case .userCancelled:
+			if model.immersiveSpaceState == .opening {
+				model.immersiveSpaceState = .closed
+				model.immersiveSpaceError = "Immersive space entry was cancelled. You can try again."
+			}
+			NSLog("visionOS immersive space request cancelled")
+		case .error:
+			if model.immersiveSpaceState == .opening {
+				model.immersiveSpaceState = .closed
+				model.immersiveSpaceError = "Unable to open the immersive space. Please try again."
+			}
+			NSLog("visionOS immersive space request failed")
+		@unknown default:
+			if model.immersiveSpaceState == .opening {
+				model.immersiveSpaceState = .closed
+				model.immersiveSpaceError = "Unable to open the immersive space. Please try again."
+			}
+			NSLog("visionOS immersive space request returned an unknown result")
+		}
+	}
+
+	var body: some View {
+		VStack(spacing: 20) {
+			Text("Immersive Mode")
+				.font(.title)
+			if let error = model.immersiveSpaceError {
+				Text(error)
+			}
+			switch model.immersiveSpaceState {
+			case .closed:
+				Button("Enter Immersive Space") {
+					Task { await enterImmersiveSpace() }
+				}
+			case .opening:
+				ProgressView("Opening immersive space...")
+			case .open:
+				Text("Immersive space is open.")
+			}
+		}
+		.padding(40)
+		.onChange(of: scenePhase, initial: true) { _, phase in
+			if phase == .active && !model.didRequestImmersiveSpace {
+				model.didRequestImmersiveSpace = true
+				Task { await enterImmersiveSpace() }
+			}
+		}
 	}
 }
 
@@ -191,42 +279,58 @@ struct CompositorServicesImmersiveSpace: Scene {
 
     let model: Model = .shared
 
-    @State var renderer: GDTCompositorServicesRenderer!
-    @State var didSetUpRenderer: Bool = false
-
 	var body: some Scene {
 		ImmersiveSpace(id: "ImmersiveSpace") {
 			CompositorLayer(configuration: ContentStageConfiguration()) { @MainActor layerRenderer in
 
-                Logger.godot.log("CompositorLayer init (initialImmersionStyle: \(String(describing: model.immersionStyle)))")
+                NSLog("visionOS compositor layer ready (initialImmersionStyle: %@)", String(describing: model.immersionStyle))
+                model.immersiveSpaceState = .open
+                model.didRequestImmersiveSpace = true
+                model.immersiveSpaceError = nil
 
                 model.seedFromProjectSettings()
 
 				GDTAppDelegateServiceVisionOS.layerRenderer = layerRenderer
-				renderer = GDTCompositorServicesRenderer(layerRenderer: layerRenderer,
-                                                         capabilities: GDTAppDelegateServiceVisionOS.layerRendererCapabilities)
+				guard let renderer = GDTCompositorServicesRenderer(layerRenderer: layerRenderer,
+                                                         capabilities: GDTAppDelegateServiceVisionOS.layerRendererCapabilities) else {
+                    fatalError("Unable to create the visionOS compositor renderer.")
+                }
+                model.renderer = renderer
 
                 let signposter = OSSignposter(subsystem: "org.godotengine.godot.compositorservices", category: "loading")
                 let signpostID = signposter.makeSignpostID()
 
-                if !didSetUpRenderer {
+                if !model.didSetUpRenderer {
                     let signpost = signposter.beginInterval("setup", id: signpostID)
                     renderer.setUp()
-                    didSetUpRenderer = true
+                    model.didSetUpRenderer = true
                     signposter.endInterval("setup", signpost)
+                    NSLog("visionOS compositor engine setup finished")
                 } else {
                     let signpost = signposter.beginInterval("updateXRInterface", id: signpostID)
                     renderer.updateXRInterface()
                     signposter.endInterval("updateXRInterface", signpost)
+                    NSLog("visionOS compositor XR layer updated")
                 }
 				Task(executorPreference: RendererTaskExecutor.shared) {
                     let signpost = signposter.beginInterval("startRenderLoop", id: signpostID)
-					await renderer.startRenderLoop()
+					renderer.startRenderLoop()
                     signposter.endInterval("startRenderLoop", signpost)
+                    await MainActor.run {
+                        if model.renderer === renderer {
+                            model.renderer = nil
+                            GDTAppDelegateServiceVisionOS.layerRenderer = nil
+                            model.immersiveSpaceState = .closed
+                        }
+                    }
+                    NSLog("visionOS compositor render loop ended")
 				}
 			}
+			.onDisappear {
+				model.immersiveSpaceState = .closed
+			}
 			.onWorldRecenter {
-				renderer.worldRecentered()
+				model.renderer?.worldRecentered()
 			}
 		}
 		.immersionStyle(
@@ -259,7 +363,15 @@ struct SwiftUIApp: App {
 	}
 
 	var body: some Scene {
-		GodotWindowScene()
+		WindowGroup {
+			if useCompositorServices {
+				// A launcher window must never create a second engine renderer.
+				ImmersiveLauncher()
+			} else {
+				GodotSwiftUIViewController()
+					.ignoresSafeArea()
+			}
+		}
 		CompositorServicesImmersiveSpace()
 	}
 }
