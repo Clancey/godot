@@ -295,25 +295,29 @@ void MetalHeapAllocator::_free_allocation(MetalAllocation &p_allocation) {
 }
 
 MetalBuffer MetalHeapAllocator::new_buffer(NS::UInteger p_length, MTL::ResourceOptions p_options) {
+	MetalBuffer result;
+
+#if TARGET_OS_SIMULATOR
+	// Simulator devices do not support placement heaps well enough to use them:
+	// they reject descriptors the hardware accepts, and they do so from the sizing
+	// query as well as from heap creation. Everything is allocated as a committed
+	// resource instead, which leaves the allocation INVALID -- the kind reserved
+	// for committed resources, which _free_allocation() ignores, so the resource
+	// itself owns the memory.
+	//
+	// This has to precede heapBufferSizeAndAlign(), which validates against heap
+	// rules even for a resource that is never placed on a heap.
+	result.buffer = NS::TransferPtr(device->newBuffer(p_length, p_options));
+	return result;
+#else
+
 	uint32_t pool_index = _pool_for_options(p_options);
 	MTL::SizeAndAlign sa = device->heapBufferSizeAndAlign(p_length, p_options);
 	// Placement-heap resources inherit the heap's hazard tracking; strip
 	// hazard bits and pass storage/cache + untracked only.
 	MTL::ResourceOptions heap_options = (p_options & (RESOURCE_STORAGE_MODE_MASK | RESOURCE_CPU_CACHE_MODE_MASK)) | MTL::ResourceHazardTrackingModeUntracked;
 
-	MetalBuffer result;
 	MTL::Heap *heap = nullptr;
-
-#if TARGET_OS_SIMULATOR
-	// Simulator devices only accept private storage for placement heaps, so shared
-	// allocations are created as committed resources instead. The allocation is
-	// left INVALID, which _free_allocation() ignores, leaving the resource itself
-	// to release the memory.
-	if (pool_index != POOL_PRIVATE) {
-		result.buffer = NS::TransferPtr(device->newBuffer(p_length, p_options));
-		return result;
-	}
-#endif
 
 	if (sa.size > _preferred_block_size(pool_index) / 2) {
 		if (!_dedicated_allocate(pool_index, sa.size, result.allocation, heap)) {
@@ -331,22 +335,23 @@ MetalBuffer MetalHeapAllocator::new_buffer(NS::UInteger p_length, MTL::ResourceO
 		_free_allocation(result.allocation);
 	}
 	return result;
+#endif
 }
 
 MetalTexture MetalHeapAllocator::new_texture(const MTL::TextureDescriptor *p_desc) {
-	uint32_t pool_index = _pool_for_texture(p_desc);
-	MTL::SizeAndAlign sa = device->heapTextureSizeAndAlign(p_desc);
-
 	MetalTexture result;
-	MTL::Heap *heap = nullptr;
 
 #if TARGET_OS_SIMULATOR
-	// See new_buffer(): shared placement heaps are unavailable on the simulator.
-	if (pool_index != POOL_PRIVATE) {
-		result.texture = NS::TransferPtr(device->newTexture(p_desc));
-		return result;
-	}
-#endif
+	// See new_buffer(): simulators do not use placement heaps, and the early-out
+	// has to precede heapTextureSizeAndAlign(), which validates the descriptor
+	// against heap rules even for a texture that is never placed on a heap.
+	result.texture = NS::TransferPtr(device->newTexture(p_desc));
+	return result;
+#else
+
+	uint32_t pool_index = _pool_for_texture(p_desc);
+	MTL::SizeAndAlign sa = device->heapTextureSizeAndAlign(p_desc);
+	MTL::Heap *heap = nullptr;
 
 	if (sa.size > _preferred_block_size(pool_index) / 2) {
 		if (!_dedicated_allocate(pool_index, sa.size, result.allocation, heap)) {
@@ -364,6 +369,7 @@ MetalTexture MetalHeapAllocator::new_texture(const MTL::TextureDescriptor *p_des
 		_free_allocation(result.allocation);
 	}
 	return result;
+#endif
 }
 
 void MetalHeapAllocator::free_buffer(MetalBuffer &p_buffer) {
