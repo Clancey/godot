@@ -36,6 +36,8 @@
 #include "drivers/metal/pixel_formats.h"
 #include "drivers/metal/sha256_digest.h"
 
+#include <TargetConditionals.h>
+
 #ifdef DEBUG_ENABLED
 #include "core/os/os.h"
 #endif
@@ -1039,7 +1041,10 @@ public:
 		_FORCE_INLINE_ void apply(T *p_enc) const {
 			p_enc->setCullMode(cull_mode);
 			p_enc->setTriangleFillMode(fill_mode);
+#if !TARGET_OS_SIMULATOR
+			// Simulator devices do not implement depth clip mode.
 			p_enc->setDepthClipMode(clip_mode);
+#endif
 			p_enc->setFrontFacingWinding(winding);
 			depth_bias.apply(p_enc);
 			stencil.apply(p_enc);
