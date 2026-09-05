@@ -258,6 +258,26 @@ bool RenderingDeviceDriverMetal::is_valid_linear(const TextureFormat &p_format) 
 			&& p_format.samples == TEXTURE_SAMPLES_1; // Linear textures must have 1 sample.
 }
 
+// Simulator Metal validation rejects a texture that carries both a non-identity swizzle
+// and shader-write usage:
+//
+//     Texture swizzling is not compatable with MTLTextureUsageShaderWrite
+//
+// The swizzle is dropped rather than the write usage. A texture that cannot be written
+// breaks any compute shader targeting it, whereas losing the swizzle only changes how its
+// channels are read back. Vulkan requires identity swizzle for storage images for the same
+// reason, so portable code already cannot rely on that combination.
+//
+// This applies equally to texture views, which inherit the usage of the texture they are
+// created from.
+_FORCE_INLINE_ static bool drop_swizzle_for_shader_write(bool p_shader_writable) {
+#if TARGET_OS_SIMULATOR
+	return p_shader_writable;
+#else
+	return false;
+#endif
+}
+
 RDD::TextureID RenderingDeviceDriverMetal::texture_create(const TextureFormat &p_format, const TextureView &p_view) {
 	NS::SharedPtr<MTL::TextureDescriptor> desc = NS::TransferPtr(MTL::TextureDescriptor::alloc()->init());
 	desc->setTextureType(TEXTURE_TYPE[p_format.texture_type]);
@@ -331,17 +351,9 @@ RDD::TextureID RenderingDeviceDriverMetal::texture_create(const TextureFormat &p
 
 	bool no_swizzle = memcmp(&IDENTITY_SWIZZLE, &swizzle, sizeof(MTL::TextureSwizzleChannels)) == 0;
 
-#if TARGET_OS_SIMULATOR
-	// Simulator Metal validation rejects a swizzled texture that is also shader
-	// writable. The swizzle is dropped rather than the write usage: a texture that
-	// cannot be written breaks any compute shader targeting it, whereas losing the
-	// swizzle only changes how its channels are read back. Vulkan requires identity
-	// swizzle for storage images for the same reason, so this matches the behaviour
-	// portable code already has to assume.
-	if (!no_swizzle && (p_format.usage_bits & TEXTURE_USAGE_STORAGE_BIT)) {
+	if (!no_swizzle && drop_swizzle_for_shader_write(p_format.usage_bits & TEXTURE_USAGE_STORAGE_BIT)) {
 		no_swizzle = true;
 	}
-#endif
 
 	if (!no_swizzle) {
 		desc->setSwizzle(swizzle);
@@ -532,6 +544,10 @@ RDD::TextureID RenderingDeviceDriverMetal::texture_create_shared(TextureID p_ori
 #define SWIZZLE(C, CHAN) (p_view.swizzle_##C != TEXTURE_SWIZZLE_IDENTITY ? component_swizzle[p_view.swizzle_##C] : MTL::TextureSwizzle##CHAN)
 	MTL::TextureSwizzleChannels swizzle = MTL::TextureSwizzleChannels::Make(SWIZZLE(r, Red), SWIZZLE(g, Green), SWIZZLE(b, Blue), SWIZZLE(a, Alpha));
 #undef SWIZZLE
+
+	if (drop_swizzle_for_shader_write(src_texture->usage() & MTL::TextureUsageShaderWrite)) {
+		swizzle = MTL::TextureSwizzleChannels::Default();
+	}
 	MTL::Texture *obj = src_texture->newTextureView(format, src_texture->textureType(), NS::Range::Make(0, src_texture->mipmapLevelCount()), NS::Range::Make(0, slices), swizzle);
 	ERR_FAIL_NULL_V_MSG(obj, TextureID(), "Unable to create shared texture");
 
@@ -592,6 +608,10 @@ RDD::TextureID RenderingDeviceDriverMetal::texture_create_shared_from_slice(Text
 #define SWIZZLE(C, CHAN) (p_view.swizzle_##C != TEXTURE_SWIZZLE_IDENTITY ? component_swizzle[p_view.swizzle_##C] : MTL::TextureSwizzle##CHAN)
 	MTL::TextureSwizzleChannels swizzle = MTL::TextureSwizzleChannels::Make(SWIZZLE(r, Red), SWIZZLE(g, Green), SWIZZLE(b, Blue), SWIZZLE(a, Alpha));
 #undef SWIZZLE
+
+	if (drop_swizzle_for_shader_write(src_texture->usage() & MTL::TextureUsageShaderWrite)) {
+		swizzle = MTL::TextureSwizzleChannels::Default();
+	}
 	MTL::Texture *obj = src_texture->newTextureView(format, textureType, NS::Range::Make(p_mipmap, p_mipmaps), NS::Range::Make(p_layer, p_layers), swizzle);
 	ERR_FAIL_NULL_V_MSG(obj, TextureID(), "Unable to create shared texture");
 
