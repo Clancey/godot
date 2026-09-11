@@ -37,6 +37,7 @@
 #include "core/os/os.h"
 #include "core/string/string_builder.h"
 #include "core/version.h"
+#include "servers/rendering/rendering_shader_container.h"
 #include "servers/rendering/shader_include_db.h"
 
 #define ENABLE_SHADER_CACHE 1
@@ -652,6 +653,9 @@ bool ShaderRD::_load_from_cache(Version *p_version, int p_group) {
 
 	ERR_FAIL_COND_V(variant_count != (uint32_t)group_to_variant_map[p_group].size(), false); //should not happen but check
 
+	Ref<RenderingShaderContainer> shader_container = RD::get_singleton()->get_device_driver()->get_shader_container_format().create_container();
+	ERR_FAIL_COND_V(shader_container.is_null(), false);
+
 	for (uint32_t i = 0; i < variant_count; i++) {
 		int variant_id = group_to_variant_map[p_group][i];
 		uint32_t variant_size = f->get_32();
@@ -670,6 +674,11 @@ bool ShaderRD::_load_from_cache(Version *p_version, int p_group) {
 		uint32_t br = f->get_buffer(variant_bytes.ptrw(), variant_size);
 
 		ERR_FAIL_COND_V(br != variant_size, false);
+
+		if (!shader_container->is_cache_compatible(variant_bytes)) {
+			print_verbose(vformat("Shader cache miss for %s due to incompatible binary for variant %d", name.path_join(group_sha256[p_group]).path_join(_version_get_sha1(p_version)), variant_id));
+			return false;
+		}
 
 		p_version->variant_data.write[variant_id] = variant_bytes;
 	}

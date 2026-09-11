@@ -261,7 +261,14 @@ struct SceneShaderData : public ShaderData {
 		DEPTH_TEST_DISABLED,
 		DEPTH_TEST_ENABLED,
 		DEPTH_TEST_ENABLED_INVERTED,
+		DEPTH_TEST_ALWAYS,
 	};
+
+	static GLenum get_depth_compare_operator(DepthTest p_depth_test);
+
+	static bool depth_test_supports_prepass(DepthTest p_depth_test) {
+		return p_depth_test == DEPTH_TEST_ENABLED;
+	}
 
 	enum StencilCompare {
 		STENCIL_COMPARE_LESS,

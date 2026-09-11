@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  godot_renderer.mm                                                     */
+/*  test_pipeline_hash_map_rd.cpp                                          */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,84 +28,34 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#import "godot_renderer.h"
+#include "tests/test_macros.h"
 
-#include "core/config/project_settings.h"
-#import "drivers/apple_embedded/display_server_apple_embedded.h"
-#import "drivers/apple_embedded/os_apple_embedded.h"
-#include "main/main.h"
+TEST_FORCE_LINK(test_pipeline_hash_map_rd)
 
-@interface GDTRenderer ()
+#include "servers/rendering/renderer_rd/pipeline_hash_map_rd.h"
+#include "tests/test_tools.h"
 
-@property(assign, nonatomic) BOOL hasCalledProjectDataSetUp;
-@property(assign, nonatomic) BOOL hasStartedMain;
-@property(assign, nonatomic) BOOL hasFinishedSetUp;
+namespace TestPipelineHashMapRD {
 
-@end
+struct FailedCompiler {
+	void compile(uint32_t p_key) {}
+};
 
-@implementation GDTRenderer
-
-- (void)performOnEngineThread:(void (^)(void))block {
-	safeDispatchSyncToMain(block);
-}
-
-- (BOOL)setUp {
-	if (self.hasFinishedSetUp) {
-		return NO;
-	}
-
-	if (!OS::get_singleton()) {
-		exit(0);
-	}
-
-	if (!self.hasCalledProjectDataSetUp) {
-		[self setUpProjectDataShowingBootLogo:YES];
-	}
-
-	if (!self.hasStartedMain) {
-		[self startMain];
-	}
-
-	self.hasFinishedSetUp = YES;
-
-	return NO;
-}
-
-- (void)setUpProjectDataShowingBootLogo:(BOOL)p_show_boot_logo {
-	self.hasCalledProjectDataSetUp = YES;
-	[self performOnEngineThread:^{
-		Main::setup2(p_show_boot_logo);
-
-		// this might be necessary before here
-		NSDictionary *dict = [[NSBundle mainBundle] infoDictionary];
-		for (NSString *key in dict) {
-			NSObject *value = [dict objectForKey:key];
-			String ukey = String::utf8([key UTF8String]);
-
-			// we need a NSObject to Variant conversor
-
-			if ([value isKindOfClass:[NSString class]]) {
-				NSString *str = (NSString *)value;
-				String uval = String::utf8([str UTF8String]);
-
-				ProjectSettings::get_singleton()->set("Info.plist/" + ukey, uval);
-
-			} else if ([value isKindOfClass:[NSNumber class]]) {
-				NSNumber *n = (NSNumber *)value;
-				double dval = [n doubleValue];
-
-				ProjectSettings::get_singleton()->set("Info.plist/" + ukey, dval);
-			}
-			// do stuff
+TEST_CASE("[PipelineHashMapRD] Failed compilation tasks are drained once") {
+	ErrorDetector errors;
+	FailedCompiler compiler;
+	{
+		PipelineHashMapRD<uint32_t, FailedCompiler, decltype(&FailedCompiler::compile)> pipelines;
+		pipelines.set_creation_object_and_function(&compiler, &FailedCompiler::compile);
+		for (uint32_t i = 0; i < 4; i++) {
+			pipelines.compile_pipeline(i, i, RSE::PIPELINE_SOURCE_SURFACE, true);
 		}
-	}];
+		pipelines.clear_pipelines();
+		CHECK_FALSE(errors.has_error);
+		pipelines.clear_pipelines();
+		CHECK_FALSE(errors.has_error);
+	}
+	CHECK_FALSE(errors.has_error);
 }
 
-- (void)startMain {
-	self.hasStartedMain = YES;
-	[self performOnEngineThread:^{
-		OS_AppleEmbedded::get_singleton()->start();
-	}];
-}
-
-@end
+} // namespace TestPipelineHashMapRD

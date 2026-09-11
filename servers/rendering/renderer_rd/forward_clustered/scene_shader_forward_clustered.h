@@ -157,7 +157,14 @@ public:
 			DEPTH_TEST_DISABLED,
 			DEPTH_TEST_ENABLED,
 			DEPTH_TEST_ENABLED_INVERTED,
+			DEPTH_TEST_ALWAYS,
 		};
+
+		static RD::PipelineDepthStencilState make_depth_stencil_state(DepthTest p_depth_test, DepthDraw p_depth_draw);
+
+		static bool depth_test_supports_prepass(DepthTest p_depth_test) {
+			return p_depth_test == DEPTH_TEST_ENABLED;
+		}
 
 		enum CullVariant {
 			CULL_VARIANT_NORMAL,
@@ -238,6 +245,7 @@ public:
 		int blend_mode = BLEND_MODE_MIX;
 		int depth_test_disabledi = 0;
 		int depth_test_invertedi = 0;
+		int depth_test_alwaysi = 0;
 		int alpha_antialiasing_mode = ALPHA_ANTIALIASING_OFF;
 
 		bool uses_point_size = false;
@@ -287,13 +295,13 @@ public:
 			bool has_blend_alpha = uses_blend_alpha;
 			bool has_alpha = has_base_alpha || has_blend_alpha;
 			bool no_depth_draw = depth_draw == DEPTH_DRAW_DISABLED;
-			bool no_depth_test = depth_test != DEPTH_TEST_ENABLED;
+			bool no_depth_test = !depth_test_supports_prepass(depth_test);
 			return has_alpha || has_read_screen_alpha || no_depth_draw || no_depth_test;
 		}
 
 		_FORCE_INLINE_ bool uses_depth_in_alpha_pass() const {
 			bool no_depth_draw = depth_draw == DEPTH_DRAW_DISABLED;
-			bool no_depth_test = depth_test != DEPTH_TEST_ENABLED;
+			bool no_depth_test = !depth_test_supports_prepass(depth_test);
 			return (uses_depth_prepass_alpha || uses_alpha_antialiasing) && !(no_depth_draw || no_depth_test);
 		}
 

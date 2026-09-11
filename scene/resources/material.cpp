@@ -847,6 +847,9 @@ void BaseMaterial3D::_update_shader() {
 			case DEPTH_TEST_INVERTED:
 				code += ", depth_test_inverted";
 				break;
+			case DEPTH_TEST_ALWAYS:
+				code += ", depth_test_always";
+				break;
 			case DEPTH_TEST_MAX:
 				break; // Internal value, skip.
 		}
@@ -1154,6 +1157,10 @@ uniform vec2 heightmap_flip;
 )",
 				texfilter_height_str);
 	}
+	if (discard_zero_alpha) {
+		code += "uniform float glyph_depth_offset = 0.0;\nvarying flat float glyph_depth_offset_view;\n";
+	}
+
 	if (flags[FLAG_UV1_USE_TRIPLANAR]) {
 		code += "varying vec3 uv1_triplanar_pos;\n";
 	}
@@ -1363,6 +1370,10 @@ void vertex() {)";
 		MODELVIEW_MATRIX[2] *= sc;
 	}
 )";
+	}
+
+	if (discard_zero_alpha) {
+		code += "\tglyph_depth_offset_view = glyph_depth_offset * length(MODELVIEW_MATRIX[2].xyz);\n";
 	}
 
 	if (flags[FLAG_UV1_USE_TRIPLANAR] || flags[FLAG_UV2_USE_TRIPLANAR]) {
@@ -1776,6 +1787,7 @@ void fragment() {)";
 		}
 	}
 
+	const bool uses_fragment_alpha = features[FEATURE_REFRACTION] || transparency != TRANSPARENCY_DISABLED || flags[FLAG_USE_SHADOW_TO_OPACITY] || distance_fade == DISTANCE_FADE_PIXEL_ALPHA || proximity_fade_enabled;
 	if (features[FEATURE_REFRACTION]) {
 		if (features[FEATURE_NORMAL_MAPPING]) {
 			code += R"(
@@ -1815,7 +1827,7 @@ void fragment() {)";
 	ALPHA = 1.0;
 )";
 
-	} else if (transparency != TRANSPARENCY_DISABLED || flags[FLAG_USE_SHADOW_TO_OPACITY] || (distance_fade == DISTANCE_FADE_PIXEL_ALPHA) || proximity_fade_enabled) {
+	} else if (uses_fragment_alpha) {
 		code += "	ALPHA *= albedo.a * albedo_tex.a;\n";
 	}
 	if (transparency == TRANSPARENCY_ALPHA_HASH) {
@@ -2064,6 +2076,27 @@ void fragment() {)";
 )";
 	}
 
+	const bool foreground_depth_alpha = depth_test == DEPTH_TEST_ALWAYS && !flags[FLAG_DISABLE_DEPTH_TEST] && ddm == DEPTH_DRAW_ALWAYS && uses_fragment_alpha;
+	if (discard_zero_alpha || foreground_depth_alpha) {
+		// Keep uncovered texels from replacing scene depth without clipping fractional alpha.
+		code += R"(	if (ALPHA == 0.0) {
+		discard;
+	}
+)";
+	}
+	if (discard_zero_alpha) {
+		code += R"(	DEPTH = FRAGCOORD.z;
+	// Offset only depth, retaining glyph coverage and ordering on either face.
+	if (glyph_depth_offset_view != 0.0) {
+		vec4 glyph_clip = PROJECTION_MATRIX * vec4(VERTEX.xy, VERTEX.z + glyph_depth_offset_view, 1.0);
+		float glyph_depth = (glyph_clip.z / glyph_clip.w - CLIP_SPACE_FAR) / (1.0 - CLIP_SPACE_FAR);
+		if (glyph_clip.w <= 0.0 || glyph_depth < 0.0 || glyph_depth > 1.0) {
+			discard;
+		}
+		DEPTH = glyph_depth;
+	}
+)";
+	}
 	code += "}\n";
 
 	// We must create the shader outside the shader_map_mutex to avoid potential deadlocks with
@@ -2434,6 +2467,7 @@ BaseMaterial3D::DepthDrawMode BaseMaterial3D::get_depth_draw_mode() const {
 }
 
 void BaseMaterial3D::set_depth_test(DepthTest p_func) {
+	ERR_FAIL_INDEX(p_func, DEPTH_TEST_MAX);
 	if (depth_test == p_func) {
 		return;
 	}
@@ -3025,7 +3059,7 @@ float BaseMaterial3D::get_fov_override() const {
 	return fov_override;
 }
 
-Ref<Material> BaseMaterial3D::get_material_for_2d(bool p_shaded, Transparency p_transparency, bool p_double_sided, bool p_billboard, bool p_billboard_y, bool p_msdf, bool p_no_depth, bool p_fixed_size, TextureFilter p_filter, AlphaAntiAliasing p_alpha_antialiasing_mode, bool p_texture_repeat, RID *r_shader_rid) {
+Ref<Material> BaseMaterial3D::get_material_for_2d(bool p_shaded, Transparency p_transparency, bool p_double_sided, bool p_billboard, bool p_billboard_y, bool p_msdf, bool p_no_depth, bool p_fixed_size, TextureFilter p_filter, AlphaAntiAliasing p_alpha_antialiasing_mode, bool p_texture_repeat, RID *r_shader_rid, bool p_depth_draw_always, bool p_depth_test_always) {
 	uint64_t key = 0;
 	key |= ((int8_t)p_shaded & 0x01) << 0;
 	key |= ((int8_t)p_transparency & 0x07) << 1; // Bits 1-3.
@@ -3038,6 +3072,8 @@ Ref<Material> BaseMaterial3D::get_material_for_2d(bool p_shaded, Transparency p_
 	key |= ((int8_t)p_filter & 0x07) << 10; // Bits 10-12.
 	key |= ((int8_t)p_alpha_antialiasing_mode & 0x07) << 13; // Bits 13-15.
 	key |= ((int8_t)p_texture_repeat & 0x01) << 16;
+	key |= uint64_t(p_depth_draw_always) << 17;
+	key |= uint64_t(p_depth_test_always) << 18;
 
 	if (materials_for_2d.has(key)) {
 		if (r_shader_rid) {
@@ -3049,6 +3085,9 @@ Ref<Material> BaseMaterial3D::get_material_for_2d(bool p_shaded, Transparency p_
 	Ref<StandardMaterial3D> material;
 	material.instantiate();
 
+	material->discard_zero_alpha = p_depth_draw_always;
+	material->set_depth_draw_mode(p_depth_draw_always ? DEPTH_DRAW_ALWAYS : DEPTH_DRAW_OPAQUE_ONLY);
+	material->set_depth_test(p_depth_test_always ? DEPTH_TEST_ALWAYS : DEPTH_TEST_DEFAULT);
 	material->set_shading_mode(p_shaded ? SHADING_MODE_PER_PIXEL : SHADING_MODE_UNSHADED);
 	material->set_transparency(p_transparency);
 	material->set_cull_mode(p_double_sided ? CULL_DISABLED : CULL_BACK);
@@ -3601,7 +3640,7 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "cull_mode", PROPERTY_HINT_ENUM, "Back,Front,Disabled"), "set_cull_mode", "get_cull_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "depth_draw_mode", PROPERTY_HINT_ENUM, "Opaque Only,Always,Never"), "set_depth_draw_mode", "get_depth_draw_mode");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "no_depth_test"), "set_flag", "get_flag", FLAG_DISABLE_DEPTH_TEST);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "depth_test", PROPERTY_HINT_ENUM, "Default,Inverted"), "set_depth_test", "get_depth_test");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "depth_test", PROPERTY_HINT_ENUM, "Default,Inverted,Always"), "set_depth_test", "get_depth_test");
 
 	ADD_GROUP("Shading", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "shading_mode", PROPERTY_HINT_ENUM, "Unshaded,Per-Pixel,Per-Vertex"), "set_shading_mode", "get_shading_mode");
@@ -3865,6 +3904,7 @@ void BaseMaterial3D::_bind_methods() {
 
 	BIND_ENUM_CONSTANT(DEPTH_TEST_DEFAULT);
 	BIND_ENUM_CONSTANT(DEPTH_TEST_INVERTED);
+	BIND_ENUM_CONSTANT(DEPTH_TEST_ALWAYS);
 
 	BIND_ENUM_CONSTANT(CULL_BACK);
 	BIND_ENUM_CONSTANT(CULL_FRONT);

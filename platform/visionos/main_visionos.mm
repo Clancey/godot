@@ -28,8 +28,10 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+#import "godot_app_delegate_service_visionos.h"
 #import "os_visionos.h"
 
+#include "core/os/thread_safe.h"
 #include "core/profiling/profiling.h"
 #import "drivers/apple_embedded/godot_app_delegate_apple_embedded.h"
 #import "drivers/apple_embedded/main_utilities.h"
@@ -64,6 +66,12 @@ int apple_embedded_main(int argc, char **argv) {
 	}
 
 	os->initialize_modules();
+
+	if (GDTAppDelegateServiceVisionOS.renderMode == GDTRenderModeCompositorServices) {
+		// setup2 claims Godot's main identity on the persistent immersive owner.
+		set_current_thread_safe_for_nodes(false);
+		Thread::release_main_thread();
+	}
 
 	return os->get_exit_code();
 }

@@ -33,6 +33,7 @@
 #include "visionos_hand_tracking.h"
 
 #include "visionos_simd_helpers.h"
+#include "visionos_tracking.h"
 
 namespace {
 
@@ -312,23 +313,7 @@ void VisionOSHandTracking::publish_gestures(HandIndex p_hand, const Ref<XRContro
 
 	const Transform3D palm = hand_tracker->get_hand_joint_transform(XRHandTracker::HAND_JOINT_PALM);
 
-	// Aim points along the index finger when it is tracked, otherwise it follows
-	// the palm.
-	Transform3D aim = palm;
-	if (is_joint_tracked(hand_tracker, XRHandTracker::HAND_JOINT_INDEX_FINGER_PHALANX_PROXIMAL) &&
-			is_joint_tracked(hand_tracker, XRHandTracker::HAND_JOINT_INDEX_FINGER_TIP)) {
-		const Vector3 knuckle = hand_tracker->get_hand_joint_transform(XRHandTracker::HAND_JOINT_INDEX_FINGER_PHALANX_PROXIMAL).origin;
-		const Vector3 tip = hand_tracker->get_hand_joint_transform(XRHandTracker::HAND_JOINT_INDEX_FINGER_TIP).origin;
-		const Vector3 direction = tip - knuckle;
-		const Vector3 up = palm.basis.get_column(Vector3::AXIS_Y);
-
-		// Skip the degenerate case rather than let looking_at() warn every frame.
-		if (!direction.is_zero_approx() && !up.cross(direction).is_zero_approx()) {
-			// Godot poses look down -Z.
-			aim.basis = Basis::looking_at(direction, up);
-			aim.origin = tip;
-		}
-	}
+	const Transform3D aim = visionos_hand_aim_pose(hand_tracker);
 
 	p_controller_tracker->set_pose("default", aim, Vector3(), Vector3());
 	p_controller_tracker->set_pose("aim", aim, Vector3(), Vector3());
@@ -351,8 +336,6 @@ void VisionOSHandTracking::set_hand_tracker_data_from_arkit(Ref<XRHandTracker> p
 	// Rotate from ARKit coordinates to Godot Humanoid coordinates
 	ar_hand_chirality_t chirality = ar_hand_anchor_get_chirality(p_hand_anchor);
 	bool is_left_hand = (chirality == ar_hand_chirality_left);
-	real_t rotation_angle = (is_left_hand ? -1 : 1) * Math::PI * 0.5;
-	const Quaternion rotationX(Vector3(1, 0, 0), rotation_angle);
 
 	BitField<XRHandTracker::HandJointFlags> flags = {};
 	flags.set_flag(XRHandTracker::HAND_JOINT_FLAG_ORIENTATION_VALID);
@@ -361,8 +344,7 @@ void VisionOSHandTracking::set_hand_tracker_data_from_arkit(Ref<XRHandTracker> p
 	flags.set_flag(XRHandTracker::HAND_JOINT_FLAG_POSITION_TRACKED);
 
 	// Updating all the hand joints
-	const Quaternion rotationZ(Vector3(0, 0, 1), rotation_angle);
-	const Quaternion joint_axis_adjustment = rotationX * rotationZ;
+	const Quaternion joint_axis_adjustment = visionos_hand_joint_axis_adjustment(is_left_hand);
 	ar_hand_skeleton_enumerate_joints(hand_skeleton, ^bool(ar_skeleton_joint_t joint) {
 		uint64_t joint_index = ar_skeleton_joint_get_index(joint);
 		XRHandTracker::HandJoint hand_joint = joint_from_arkit((ar_hand_skeleton_joint_name_t)joint_index);

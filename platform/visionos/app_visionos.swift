@@ -38,21 +38,6 @@ extension os.Logger {
 	static let godot = Logger(subsystem: "com.GodotFoundation.Godot", category: "SwiftUI")
 }
 
-// MARK: Renderer
-
-final class RendererTaskExecutor: TaskExecutor {
-	private let queue = DispatchQueue(label: "RenderThreadQueue", qos: .userInteractive)
-	func enqueue(_ job: UnownedJob) {
-		queue.async {
-		    job.runSynchronously(on: self.asUnownedSerialExecutor())
-		}
-	}
-	nonisolated func asUnownedSerialExecutor() -> UnownedTaskExecutor {
-		return UnownedTaskExecutor(ordinary: self)
-	}
-	static let shared: RendererTaskExecutor = RendererTaskExecutor()
-}
-
 // MARK: Swift Bridge
 
 /// Source of truth for SwiftUI scene state. ObjC/C++ mutates it through
@@ -66,7 +51,11 @@ final class Model {
 		case closed, opening, open
 	}
 
-	var immersionStyle: any ImmersionStyle
+	var immersionStyle: any ImmersionStyle {
+		didSet {
+			renderer?.alphaBlendEnabled = GDTImmersionStyle(fromSwiftUIType: immersionStyle) != .full
+		}
+	}
 	var upperLimbVisibility: Visibility = .automatic
 	var persistentSystemOverlays: Visibility = .automatic
 
@@ -76,7 +65,8 @@ final class Model {
 
 	// Engine setup belongs to the process, not to a SwiftUI scene instance.
 	var renderer: GDTCompositorServicesRenderer?
-	var didSetUpRenderer = false
+	var startupGeneration: UUID?
+	var startupWindowVisible = false
 
 	private init() {
 		immersionStyle = Self.readInitialImmersionStyleFromInfoPlist()
@@ -204,6 +194,85 @@ struct ImmersiveLauncher: View {
 	}
 }
 
+struct ImmersiveStartupStatus: View {
+	@Environment(\.openWindow) private var openWindow
+	@Environment(\.dismissWindow) private var dismissWindow
+	@Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
+
+	let generation: UUID
+	private let model: Model = .shared
+
+	private func closeStatus(returnToLauncher: Bool) {
+		guard model.startupGeneration == generation else {
+			dismissWindow(id: "GodotStartupStatus", value: generation)
+			return
+		}
+		guard model.startupWindowVisible else { return }
+		model.startupWindowVisible = false
+		if returnToLauncher {
+			// A window cannot dismiss itself when it is the last open scene.
+			openWindow(id: "GodotLauncher")
+		}
+		dismissWindow(id: "GodotStartupStatus", value: generation)
+	}
+
+	private func cancelStartup() {
+		guard model.startupGeneration == generation && model.startupWindowVisible else { return }
+		closeStatus(returnToLauncher: true)
+		Task { @MainActor in
+			guard model.startupGeneration == generation,
+			      model.immersiveSpaceState == .open else { return }
+			await dismissImmersiveSpace()
+		}
+	}
+
+	var body: some View {
+		TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+			let state = model.renderer?.startupState ?? .loading
+			VStack(spacing: 20) {
+				switch state {
+				case .preparingPipelines:
+					ProgressView("Preparing rendering pipelines...")
+				case .loading:
+					ProgressView("Loading...")
+				case .trackingUnavailable:
+					Text("Waiting for tracking...")
+				case .frameUnavailable:
+					Text("Waiting for a usable scene frame.")
+				case .ready:
+					Text("Scene ready.")
+				case .failed:
+					Text("Rendering could not start.")
+				case .closed:
+					Text("Immersive space closed.")
+				@unknown default:
+					Text("Rendering status unavailable.")
+				}
+				Button("Cancel", action: cancelStartup)
+			}
+			.padding(32)
+			.onChange(of: state, initial: true) { _, state in
+				if state == .ready && model.immersiveSpaceState == .open {
+					closeStatus(returnToLauncher: false)
+				} else if state == .closed {
+					closeStatus(returnToLauncher: true)
+				}
+			}
+		}
+		.onChange(of: model.startupGeneration) { _, value in
+			if value != generation {
+				dismissWindow(id: "GodotStartupStatus", value: generation)
+			}
+		}
+		.onChange(of: model.immersiveSpaceState) { _, state in
+			if state == .closed {
+				closeStatus(returnToLauncher: true)
+			}
+		}
+		.onDisappear(perform: cancelStartup)
+	}
+}
+
 // MARK: Compositor Services Scene
 
 struct ContentStageConfiguration: CompositorLayerConfiguration {
@@ -278,6 +347,9 @@ extension GDTVisibility {
 struct CompositorServicesImmersiveSpace: Scene {
 
     let model: Model = .shared
+	@Environment(\.openWindow) private var openWindow
+	@Environment(\.dismissWindow) private var dismissWindow
+	@Environment(\.supportsMultipleWindows) private var supportsMultipleWindows
 
 	var body: some Scene {
 		ImmersiveSpace(id: "ImmersiveSpace") {
@@ -290,40 +362,38 @@ struct CompositorServicesImmersiveSpace: Scene {
 
                 model.seedFromProjectSettings()
 
-				GDTAppDelegateServiceVisionOS.layerRenderer = layerRenderer
 				guard let renderer = GDTCompositorServicesRenderer(layerRenderer: layerRenderer,
                                                          capabilities: GDTAppDelegateServiceVisionOS.layerRendererCapabilities) else {
                     fatalError("Unable to create the visionOS compositor renderer.")
                 }
                 model.renderer = renderer
+				renderer.alphaBlendEnabled = GDTImmersionStyle(fromSwiftUIType: model.immersionStyle) != .full
+				let generation = UUID()
+				model.startupGeneration = generation
+				model.startupWindowVisible = supportsMultipleWindows
+				if supportsMultipleWindows {
+					openWindow(id: "GodotStartupStatus", value: generation)
+				} else {
+					NSLog("visionOS startup status requires UIApplicationSupportsMultipleScenes")
+				}
 
-                let signposter = OSSignposter(subsystem: "org.godotengine.godot.compositorservices", category: "loading")
-                let signpostID = signposter.makeSignpostID()
-
-                if !model.didSetUpRenderer {
-                    let signpost = signposter.beginInterval("setup", id: signpostID)
-                    renderer.setUp()
-                    model.didSetUpRenderer = true
-                    signposter.endInterval("setup", signpost)
-                    NSLog("visionOS compositor engine setup finished")
-                } else {
-                    let signpost = signposter.beginInterval("updateXRInterface", id: signpostID)
-                    renderer.updateXRInterface()
-                    signposter.endInterval("updateXRInterface", signpost)
-                    NSLog("visionOS compositor XR layer updated")
-                }
-				Task(executorPreference: RendererTaskExecutor.shared) {
-                    let signpost = signposter.beginInterval("startRenderLoop", id: signpostID)
-					renderer.startRenderLoop()
-                    signposter.endInterval("startRenderLoop", signpost)
-                    await MainActor.run {
+				renderer.startRenderLoop {
+                    Task { @MainActor in
                         if model.renderer === renderer {
+							if renderer.startupState == .failed {
+								model.immersiveSpaceError = "Rendering could not start."
+							}
+							if model.startupWindowVisible {
+								model.startupWindowVisible = false
+								openWindow(id: "GodotLauncher")
+								dismissWindow(id: "GodotStartupStatus", value: generation)
+							}
+							model.startupGeneration = nil
                             model.renderer = nil
-                            GDTAppDelegateServiceVisionOS.layerRenderer = nil
                             model.immersiveSpaceState = .closed
                         }
+                        NSLog("visionOS compositor render loop ended")
                     }
-                    NSLog("visionOS compositor render loop ended")
 				}
 			}
 			.onDisappear {
@@ -363,7 +433,7 @@ struct SwiftUIApp: App {
 	}
 
 	var body: some Scene {
-		WindowGroup {
+		WindowGroup(id: "GodotLauncher") {
 			if useCompositorServices {
 				// A launcher window must never create a second engine renderer.
 				ImmersiveLauncher()
@@ -371,6 +441,16 @@ struct SwiftUIApp: App {
 				GodotSwiftUIViewController()
 					.ignoresSafeArea()
 			}
+		}
+		WindowGroup(id: "GodotStartupStatus", for: UUID.self) { $generation in
+			if let generation {
+				ImmersiveStartupStatus(generation: generation)
+			}
+		}
+		.defaultSize(width: 420, height: 180)
+		.windowResizability(.contentSize)
+		.defaultWindowPlacement { _, _ in
+			WindowPlacement(.utilityPanel)
 		}
 		CompositorServicesImmersiveSpace()
 	}

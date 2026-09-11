@@ -35,7 +35,14 @@
 #include "visionos_controller_tracking.h"
 #include "visionos_definitions.h"
 #include "visionos_hand_tracking.h"
+#include "visionos_presentation_thread.h"
 #include "visionos_scene_understanding.h"
+
+#include <memory>
+
+class VisionOSPresentation;
+struct VisionOSSceneOutput;
+struct VisionOSSceneGeometry;
 
 #ifdef __OBJC__
 #import <CompositorServices/CompositorServices.h>
@@ -79,9 +86,9 @@ public:
 
 private:
 	bool initialized = false;
-	XRInterface::TrackingStatus tracking_state;
+	XRInterface::TrackingStatus tracking_state = XRInterface::XR_NOT_TRACKING;
 
-	RenderingServer *rendering_server;
+	RenderingServer *rendering_server = nullptr;
 
 	ar_session_t ar_session = nullptr;
 
@@ -94,18 +101,14 @@ private:
 
 		ar_world_tracking_provider_t world_tracking_provider = nullptr;
 
-		cp_frame_t current_frame = nullptr;
-		cp_frame_timing_t current_timing = nullptr;
+		double presentation_time = 0;
+		double trackable_time = 0;
 
 		// Head tracker
 		Ref<XRPositionalTracker> head_tracker;
 
-		ar_device_anchor_t current_device_anchor = nullptr;
-
 		bool initialize(XRServer *xr_server);
 	} cs;
-
-	void set_head_pose_from_arkit();
 
 	// Checks the ARKit authorizations asynchronously
 	// and updates the ARKit session if they changed.
@@ -122,7 +125,8 @@ private:
 
 	// visionOS composites passthrough using the alpha channel, so the root viewport
 	// needs a transparent background whenever passthrough is visible.
-	void update_transparent_background();
+	VisionOSViewportTransparency viewport_transparency;
+	void update_transparent_background(bool p_alpha_blend);
 
 	// Hand tracking
 	VisionOSHandTracking hands;
@@ -146,14 +150,16 @@ private:
 
 		float minimum_supported_near_plane = 0;
 
-		// RenderThread must query the device anchor again,
-		// because ar_device_anchor_t objects cannot be safely shared between threads
-		ar_device_anchor_t current_device_anchor = nullptr;
-		ar_world_tracking_provider_t world_tracking_provider = nullptr;
 		Transform3D origin_from_head;
+		std::shared_ptr<VisionOSPresentation> presentation;
+		std::shared_ptr<VisionOSSceneOutput> scene_output;
+		uint64_t output_generation = 0;
+		uint64_t output_sequence = 0;
 
-		cp_frame_t current_frame = nullptr;
-		cp_drawable_t current_drawable = nullptr;
+		SafeFlag rendered_frame;
+		uint64_t diagnostic_frame = 0;
+		bool diagnostic_viewport_drawn = false;
+		uint64_t diagnostic_projection_logged[2] = {};
 
 		RD::Texture current_color_texture;
 		RID current_color_texture_id;
@@ -166,28 +172,16 @@ private:
 		SafeNumeric<uint32_t> cached_render_target_width{ 0 };
 		SafeNumeric<uint32_t> cached_render_target_height{ 0 };
 
-		// Wraps cp_drawable_encode_present in a drawable render context with a no-op pass,
-		// required by Compositor Services when the layer supports progressive immersion.
-		// p_command_buffer is an id<MTLCommandBuffer> bridge-cast to void *, since this header
-		// is included from non-Objective-C++ translation units.
-		static void encode_drawable_no_op_and_present(cp_drawable_t p_drawable, cp_frame_t p_frame, void *p_command_buffer);
-
 	public:
 		void initialize();
 		void uninitialize();
 		void prepare_screen();
+		void update_presentation();
 
 		void set_minimum_supported_near_plane(float p_minimum_supported_near_plane);
-		// p_current_frame should be an cp_frame_t pointer casted to uint64_t
-		void set_current_frame(uint64_t p_current_frame);
-
-		// Expects an ar_world_tracking_provider_t
-		void set_world_tracking_provider(uint64_t p_world_tracking_provider);
-
 		// Safe to be called from the game thread
-		void start_frame_update();
-		void end_frame_update();
 		Size2 get_render_target_size();
+		bool has_rendered_frame() const { return rendered_frame.is_set(); }
 
 		// Only safe to be called from the render thread
 		uint32_t get_view_count();
@@ -197,6 +191,7 @@ private:
 		Rect2i get_render_region();
 
 		void pre_render();
+		bool pre_draw_viewport();
 		Vector<RenderingServerTypes::BlitToScreen> post_draw_viewport(RID p_render_target, const Rect2 &p_screen_rect);
 		void encode_present(MTL3::MDCommandBuffer *p_cmd_buffer);
 		void end_frame();
@@ -218,7 +213,7 @@ public:
 	VisionOSXRInterface();
 	~VisionOSXRInterface();
 
-	cp_frame_timing_t get_current_timing();
+	bool has_rendered_frame() const { return rt.has_rendered_frame(); }
 
 	void emit_signal_enum(SignalEnum p_signal);
 
@@ -291,6 +286,9 @@ public:
 	}
 	virtual void pre_render() override {
 		rt.pre_render();
+	}
+	virtual bool pre_draw_viewport(RID p_render_target) override {
+		return rt.pre_draw_viewport();
 	}
 	virtual Vector<RenderingServerTypes::BlitToScreen> post_draw_viewport(RID p_render_target, const Rect2 &p_screen_rect) override {
 		return rt.post_draw_viewport(p_render_target, p_screen_rect);

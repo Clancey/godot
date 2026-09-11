@@ -1059,11 +1059,14 @@ struct TangentVertex {
 	float uv[2];
 };
 
-static void _propagate_tangents_or_split(LocalVector<SurfaceTool::Vertex> &r_vertex_array, LocalVector<int> &r_index_array, const float *p_tangents, bool p_split) {
+static void _propagate_tangents_or_split(LocalVector<SurfaceTool::Vertex> &r_vertex_array, LocalVector<int> &r_index_array, const float *p_tangents, bool p_split, const uint32_t *p_preferred_corners) {
 	// Seed each vertex with one of its corner tangents; the loop below fixes any mismatches.
 	for (size_t i = 0; i < r_index_array.size(); i++) {
-		Vector4 tangent(p_tangents[i * 4 + 0], p_tangents[i * 4 + 1], p_tangents[i * 4 + 2], p_tangents[i * 4 + 3]);
-		r_vertex_array[r_index_array[i]].tangent = Vector4(p_tangents[i * 4 + 0], p_tangents[i * 4 + 1], p_tangents[i * 4 + 2], p_tangents[i * 4 + 3]);
+		size_t corner = i;
+		if (p_preferred_corners && p_preferred_corners[r_index_array[i]] != ~0u) {
+			corner = p_preferred_corners[r_index_array[i]];
+		}
+		r_vertex_array[r_index_array[i]].tangent = Vector4(p_tangents[corner * 4 + 0], p_tangents[corner * 4 + 1], p_tangents[corner * 4 + 2], p_tangents[corner * 4 + 3]);
 	}
 
 	if (!p_split) {
@@ -1143,8 +1146,38 @@ void SurfaceTool::generate_tangents(bool p_split) {
 			vertices->normal, sizeof(TangentVertex),
 			vertices->uv, sizeof(TangentVertex), 0);
 
+	// The generator's UV orientation assumes normals follow the triangle
+	// winding. Godot's clockwise faces commonly supply the opposite normal.
+	// Preserve its tangent direction and adapt only the generated handedness.
+	LocalVector<uint32_t> preferred_corners;
+	if (!p_split && !index_array.is_empty()) {
+		preferred_corners.resize(vertex_array.size());
+		memset(preferred_corners.ptr(), -1, preferred_corners.size() * sizeof(uint32_t));
+	}
+	for (size_t corner = 0; corner < corner_count; corner += 3) {
+		size_t indices[3];
+		Vector3 positions[3];
+		for (int j = 0; j < 3; j++) {
+			indices[j] = index_array.size() > 0 ? size_t(index_array[corner + j]) : corner + j;
+			const float *position = vertices[indices[j]].position;
+			positions[j] = Vector3(position[0], position[1], position[2]);
+		}
+		const Vector3 winding_normal = (positions[1] - positions[0]).cross(positions[2] - positions[0]);
+		for (int j = 0; j < 3; j++) {
+			const float *normal = vertices[indices[j]].normal;
+			if (winding_normal.dot(Vector3(normal[0], normal[1], normal[2])) < 0.0) {
+				tangents[(corner + j) * 4 + 3] = -tangents[(corner + j) * 4 + 3];
+			}
+			// Without splitting, an undefined zero-area fallback must not
+			// overwrite the frame of a visible triangle sharing this vertex.
+			if (!preferred_corners.is_empty() && winding_normal != Vector3()) {
+				preferred_corners[indices[j]] = uint32_t(corner + j);
+			}
+		}
+	}
+
 	if (index_array.size() > 0) {
-		_propagate_tangents_or_split(vertex_array, index_array, tangents.ptr(), p_split);
+		_propagate_tangents_or_split(vertex_array, index_array, tangents.ptr(), p_split, preferred_corners.ptr());
 	} else {
 		for (size_t i = 0; i < corner_count; i++) {
 			Vector4 tangent(tangents[i * 4 + 0], tangents[i * 4 + 1], tangents[i * 4 + 2], tangents[i * 4 + 3]);

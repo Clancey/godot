@@ -55,6 +55,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	blend_mode = BLEND_MODE_MIX;
 	depth_test_disabledi = 0;
 	depth_test_invertedi = 0;
+	depth_test_alwaysi = 0;
 	alpha_antialiasing_mode = ALPHA_ANTIALIASING_OFF;
 	int cull_modei = RSE::CULL_MODE_BACK;
 
@@ -112,6 +113,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 
 	actions.render_mode_values["depth_test_disabled"] = Pair<int *, int>(&depth_test_disabledi, 1);
 	actions.render_mode_values["depth_test_inverted"] = Pair<int *, int>(&depth_test_invertedi, 1);
+	actions.render_mode_values["depth_test_always"] = Pair<int *, int>(&depth_test_alwaysi, 1);
 
 	actions.render_mode_values["cull_disabled"] = Pair<int *, int>(&cull_modei, RSE::CULL_MODE_DISABLED);
 	actions.render_mode_values["cull_front"] = Pair<int *, int>(&cull_modei, RSE::CULL_MODE_FRONT);
@@ -192,6 +194,8 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	depth_draw = DepthDraw(depth_drawi);
 	if (depth_test_disabledi) {
 		depth_test = DEPTH_TEST_DISABLED;
+	} else if (depth_test_alwaysi) {
+		depth_test = DEPTH_TEST_ALWAYS;
 	} else if (depth_test_invertedi) {
 		depth_test = DEPTH_TEST_ENABLED_INVERTED;
 	} else {
@@ -256,7 +260,7 @@ bool SceneShaderForwardClustered::ShaderData::casts_shadows() const {
 	bool has_base_alpha = (uses_alpha && (!uses_alpha_clip || uses_alpha_antialiasing)) || has_read_screen_alpha;
 	bool has_alpha = has_base_alpha || uses_blend_alpha;
 
-	return !has_alpha || (uses_depth_prepass_alpha && !(depth_draw == DEPTH_DRAW_DISABLED || depth_test != DEPTH_TEST_ENABLED));
+	return !has_alpha || (uses_depth_prepass_alpha && !(depth_draw == DEPTH_DRAW_DISABLED || !depth_test_supports_prepass(depth_test)));
 }
 
 RenderingServerTypes::ShaderNativeSourceCode SceneShaderForwardClustered::ShaderData::get_native_source_code() const {
@@ -328,6 +332,21 @@ uint16_t SceneShaderForwardClustered::ShaderData::_get_shader_version(PipelineVe
 	}
 }
 
+RD::PipelineDepthStencilState SceneShaderForwardClustered::ShaderData::make_depth_stencil_state(DepthTest p_depth_test, DepthDraw p_depth_draw) {
+	RD::PipelineDepthStencilState state;
+	if (p_depth_test != DEPTH_TEST_DISABLED) {
+		state.enable_depth_test = true;
+		state.enable_depth_write = p_depth_draw != DEPTH_DRAW_DISABLED;
+		state.depth_compare_operator = RD::COMPARE_OP_GREATER_OR_EQUAL;
+		if (p_depth_test == DEPTH_TEST_ENABLED_INVERTED) {
+			state.depth_compare_operator = RD::COMPARE_OP_LESS;
+		} else if (p_depth_test == DEPTH_TEST_ALWAYS) {
+			state.depth_compare_operator = RD::COMPARE_OP_ALWAYS;
+		}
+	}
+	return state;
+}
+
 void SceneShaderForwardClustered::ShaderData::_create_pipeline(PipelineKey p_pipeline_key) {
 #if PRINT_PIPELINE_COMPILATION_KEYS
 	print_line(
@@ -351,17 +370,7 @@ void SceneShaderForwardClustered::ShaderData::_create_pipeline(PipelineKey p_pip
 	RD::PipelineColorBlendState blend_state_depth_normal_roughness = RD::PipelineColorBlendState::create_disabled(1);
 	RD::PipelineColorBlendState blend_state_depth_normal_roughness_giprobe = RD::PipelineColorBlendState::create_disabled(2);
 
-	RD::PipelineDepthStencilState depth_stencil_state;
-
-	if (depth_test != DEPTH_TEST_DISABLED) {
-		depth_stencil_state.enable_depth_test = true;
-		depth_stencil_state.enable_depth_write = depth_draw != DEPTH_DRAW_DISABLED ? true : false;
-		depth_stencil_state.depth_compare_operator = RD::COMPARE_OP_GREATER_OR_EQUAL;
-
-		if (depth_test == DEPTH_TEST_ENABLED_INVERTED) {
-			depth_stencil_state.depth_compare_operator = RD::COMPARE_OP_LESS;
-		}
-	}
+	RD::PipelineDepthStencilState depth_stencil_state = make_depth_stencil_state(depth_test, depth_draw);
 
 	bool use_stencil = stencil_enabled && p_pipeline_key.version == PIPELINE_VERSION_COLOR_PASS;
 	depth_stencil_state.enable_stencil = use_stencil;
