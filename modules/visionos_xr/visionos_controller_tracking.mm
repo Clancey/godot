@@ -35,7 +35,10 @@
 #include "visionos_simd_helpers.h"
 #include "visionos_xr_interface.h"
 
+#include "platform/visionos/godot_compositor_services_renderer.h"
+
 void VisionOSControllerTracking::initialize(XRServer *p_xr_server, VisionOSXRInterface *p_xr_interface) {
+	generation++;
 	accessories = ar_accessories_create();
 
 	xr_interface = p_xr_interface;
@@ -65,6 +68,7 @@ void VisionOSControllerTracking::initialize(XRServer *p_xr_server, VisionOSXRInt
 }
 
 void VisionOSControllerTracking::uninitialize(XRServer *p_xr_server) {
+	generation++;
 	if (accessory_tracking_provider != nullptr) {
 		accessory_tracking_provider = nullptr;
 	}
@@ -93,6 +97,8 @@ void VisionOSControllerTracking::uninitialize(XRServer *p_xr_server) {
 }
 
 void VisionOSControllerTracking::init_for_controller(GCController *p_controller) {
+	ObjectID owner_id = xr_interface->get_instance_id();
+	uint64_t request_generation = generation;
 	ar_accessory_load_from_device(
 			p_controller,
 			^(id<GCDevice> _Nonnull device, bool success, ar_error_t _Nullable error, ar_accessory_t _Nullable accessory) {
@@ -105,8 +111,11 @@ void VisionOSControllerTracking::init_for_controller(GCController *p_controller)
 					return;
 				}
 
-				dispatch_async(dispatch_get_main_queue(), ^{
-					if (![GCController.controllers containsObject:p_controller] || left_controller_tracker.is_null() || right_controller_tracker.is_null()) {
+				visionos_dispatch_to_engine(^{
+					if (!ObjectDB::get_instance(owner_id)) {
+						return;
+					}
+					if (generation != request_generation || ![GCController.controllers containsObject:p_controller] || left_controller_tracker.is_null() || right_controller_tracker.is_null()) {
 						return;
 					}
 					ar_accessory_chirality_t chirality = ar_accessory_get_inherent_chirality(accessory);
@@ -137,13 +146,19 @@ void VisionOSControllerTracking::init_for_controller(GCController *p_controller)
 }
 
 void VisionOSControllerTracking::setup_controller_notifications() {
+	ObjectID owner_id = xr_interface->get_instance_id();
+	uint64_t request_generation = generation;
 	controller_observer = [NSNotificationCenter.defaultCenter
 			addObserverForName:GCControllerDidConnectNotification
 						object:nil
 						 queue:NSOperationQueue.mainQueue
 					usingBlock:^(NSNotification *notification) {
 						GCController *controller = (GCController *)notification.object;
-						init_for_controller(controller);
+						visionos_dispatch_to_engine(^{
+							if (ObjectDB::get_instance(owner_id) && generation == request_generation) {
+								init_for_controller(controller);
+							}
+						});
 					}];
 
 	controller_disconnect_observer = [NSNotificationCenter.defaultCenter
@@ -152,7 +167,11 @@ void VisionOSControllerTracking::setup_controller_notifications() {
 						 queue:NSOperationQueue.mainQueue
 					usingBlock:^(NSNotification *notification) {
 						GCController *controller = (GCController *)notification.object;
-						handle_controller_disconnect(controller);
+						visionos_dispatch_to_engine(^{
+							if (ObjectDB::get_instance(owner_id) && generation == request_generation) {
+								handle_controller_disconnect(controller);
+							}
+						});
 					}];
 }
 

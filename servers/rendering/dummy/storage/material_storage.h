@@ -48,6 +48,8 @@ private:
 
 	struct DummyShader {
 		HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> uniforms;
+		// Source is retained only in test builds.
+		String code;
 	};
 
 	mutable RID_Owner<DummyShader, true> shader_owner;
@@ -97,7 +99,7 @@ public:
 	virtual void shader_set_code(RID p_shader, const String &p_code) override;
 	virtual void shader_set_path_hint(RID p_shader, const String &p_code) override {}
 
-	virtual String shader_get_code(RID p_shader) const override { return ""; }
+	virtual String shader_get_code(RID p_shader) const override;
 	virtual void get_shader_parameter_list(RID p_shader, List<PropertyInfo> *p_param_list) const override;
 
 	virtual void shader_set_default_texture_parameter(RID p_shader, const StringName &p_name, RID p_texture, int p_index) override {}

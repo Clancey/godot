@@ -148,7 +148,11 @@ protected:
 			return STAGE_INDEX[p_stage];
 		}
 
-		const T &get_spv_reflect(RDC::ShaderStage p_stage) const;
+		const T &get_spv_reflect(RDC::ShaderStage p_stage) const {
+			const T *info = _spv_reflect[get_index_for_stage(p_stage)];
+			DEV_ASSERT(info != nullptr); // Caller is expected to specify valid shader stages.
+			return *info;
+		}
 
 		/*! Returns the first valid stage if multiple stages are set.
 		 *
@@ -295,6 +299,7 @@ public:
 
 	bool set_code_from_spirv(const String &p_shader_name, Span<RDC::ShaderStageSPIRVData> p_spirv);
 	RDC::ShaderReflection get_shader_reflection() const;
+	bool is_cache_compatible(const PackedByteArray &p_bytes) const;
 	bool from_bytes(const PackedByteArray &p_bytes);
 	PackedByteArray to_bytes() const;
 	bool compress_code(const uint8_t *p_decompressed_bytes, uint32_t p_decompressed_size, uint8_t *p_compressed_bytes, uint32_t *r_compressed_size, uint32_t *r_compressed_flags) const;

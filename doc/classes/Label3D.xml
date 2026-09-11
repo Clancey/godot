@@ -58,6 +58,17 @@
 			The billboard mode to use for the label.
 		</member>
 		<member name="cast_shadow" type="int" setter="set_cast_shadows_setting" getter="get_cast_shadows_setting" overrides="GeometryInstance3D" enum="GeometryInstance3D.ShadowCastingSetting" default="0" />
+		<member name="depth_draw_always" type="bool" setter="set_depth_draw_always" getter="is_depth_draw_always_enabled" default="false">
+			If [code]true[/code], writes the label's geometric depth for translucent as well as opaque fragments. Fully transparent glyph texels are discarded so the surrounding atlas rectangle does not occlude other objects.
+			With [constant ALPHA_CUT_DISABLED], this preserves the original fractional glyph and outline alpha instead of applying an alpha-scissor threshold. This is useful when a compositor requires depth for visible translucent text.
+			In this mode, [member render_priority] and [member outline_render_priority] also offset depth toward the camera by the priority multiplied by [member pixel_size], adjusted for the label's scale and [member fixed_size]. This separates coplanar text and outlines without moving their screen coverage, including when viewed from behind.
+			Depth testing must remain enabled ([member no_depth_test] must be [code]false[/code]). Depth-writing translucent text can occlude subsequently rendered transparent objects; use appropriate placement and render priorities.
+		</member>
+		<member name="depth_test_always" type="bool" setter="set_depth_test_always" getter="is_depth_test_always_enabled" default="false">
+			If [code]true[/code], the label passes the depth comparison even behind existing geometry. Unlike [member no_depth_test], this leaves depth testing enabled; combine it with [member depth_draw_always] to write valid depth for covered glyph and outline fragments without clipping their fractional alpha.
+			The label is rendered in the transparent pass using [member render_priority] and [member outline_render_priority]. Existing glyph depth offsets and alpha-cut settings are preserved. Uncovered glyph texels are discarded when [member depth_draw_always] is enabled.
+			This property is ignored when [member no_depth_test] is [code]true[/code]. It does not disable clipping or culling. Enable it only for labels that should intentionally overlay previously rendered geometry.
+		</member>
 		<member name="double_sided" type="bool" setter="set_draw_flag" getter="get_draw_flag" default="true">
 			If [code]true[/code], text can be seen from the back as well, if [code]false[/code], it is invisible when looking at it from behind.
 		</member>
@@ -98,7 +109,7 @@
 		</member>
 		<member name="outline_render_priority" type="int" setter="set_outline_render_priority" getter="get_outline_render_priority" default="-1">
 			Sets the render priority for the text outline. Higher priority objects will be sorted in front of lower priority objects.
-			[b]Note:[/b] This only applies if [member alpha_cut] is set to [constant ALPHA_CUT_DISABLED] (default value).
+			[b]Note:[/b] This applies if [member alpha_cut] is [constant ALPHA_CUT_DISABLED] (the default), or if [member depth_test_always] is enabled while [member no_depth_test] is [code]false[/code].
 			[b]Note:[/b] This only applies to sorting of transparent objects. This will not impact how transparent objects are sorted relative to opaque objects. This is because opaque objects are not sorted, while transparent objects are sorted from back to front (subject to priority).
 		</member>
 		<member name="outline_size" type="int" setter="set_outline_size" getter="get_outline_size" default="12">
@@ -109,7 +120,7 @@
 		</member>
 		<member name="render_priority" type="int" setter="set_render_priority" getter="get_render_priority" default="0">
 			Sets the render priority for the text. Higher priority objects will be sorted in front of lower priority objects.
-			[b]Note:[/b] This only applies if [member alpha_cut] is set to [constant ALPHA_CUT_DISABLED] (default value).
+			[b]Note:[/b] This applies if [member alpha_cut] is [constant ALPHA_CUT_DISABLED] (the default), or if [member depth_test_always] is enabled while [member no_depth_test] is [code]false[/code].
 			[b]Note:[/b] This only applies to sorting of transparent objects. This will not impact how transparent objects are sorted relative to opaque objects. This is because opaque objects are not sorted, while transparent objects are sorted from back to front (subject to priority).
 		</member>
 		<member name="shaded" type="bool" setter="set_draw_flag" getter="get_draw_flag" default="false">

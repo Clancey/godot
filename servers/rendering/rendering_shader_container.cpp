@@ -44,13 +44,6 @@ static inline uint32_t aligned_to(uint32_t p_size, uint32_t p_alignment) {
 }
 
 template <class T>
-const T &RenderingShaderContainer::ReflectSymbol<T>::get_spv_reflect(RDC::ShaderStage p_stage) const {
-	const T *info = _spv_reflect[get_index_for_stage(p_stage)];
-	DEV_ASSERT(info != nullptr); // Caller is expected to specify valid shader stages
-	return *info;
-}
-
-template <class T>
 void RenderingShaderContainer::ReflectSymbol<T>::set_spv_reflect(RDC::ShaderStage p_stage, const T *p_spv) {
 	stages.set_flag(1 << p_stage);
 	_spv_reflect[get_index_for_stage(p_stage)] = p_spv;
@@ -492,7 +485,8 @@ Error RenderingShaderContainer::reflect_spirv(const String &p_shader_name, Span<
 								ERR_FAIL_COND_V_MSG(reflection.uniform_sets[set][k].writable != uniform.writable, FAILED,
 										"On shader stage '" + String(RDC::SHADER_STAGE_NAMES[stage]) + "', uniform '" + binding.name + "' trying to reuse location for set=" + itos(set) + ", binding=" + itos(uniform.binding) + " with different writability.");
 
-								// Just append stage mask and return.
+								// Retain each stage's reflection as well as its visibility.
+								reflection.uniform_sets[set][k].set_spv_reflect(stage, &binding);
 								reflection.uniform_sets[set][k].stages.set_flag(uniform_stage_flags);
 								exists = true;
 								break;
@@ -796,6 +790,18 @@ RenderingDeviceCommons::ShaderReflection RenderingShaderContainer::get_shader_re
 	}
 
 	return shader_refl;
+}
+
+bool RenderingShaderContainer::is_cache_compatible(const PackedByteArray &p_bytes) const {
+	if (p_bytes.size() < int64_t(sizeof(ContainerHeader))) {
+		return false;
+	}
+
+	ContainerHeader header;
+	memcpy(&header, p_bytes.ptr(), sizeof(header));
+	// Cached native code must use the current compiler's binding layout, even when older containers can still be read.
+	return header.magic_number == CONTAINER_MAGIC_NUMBER && header.version == CONTAINER_VERSION &&
+			header.format == _format() && header.format_version == _format_version();
 }
 
 bool RenderingShaderContainer::from_bytes(const PackedByteArray &p_bytes) {

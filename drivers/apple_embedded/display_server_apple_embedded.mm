@@ -37,6 +37,7 @@
 #import "drivers/apple_embedded/apple_embedded.h"
 #import "drivers/apple_embedded/godot_app_delegate_service_apple_embedded.h"
 #import "drivers/apple_embedded/godot_keyboard_input_view.h"
+#import "drivers/apple_embedded/godot_renderer.h"
 #import "drivers/apple_embedded/godot_view_apple_embedded.h"
 #import "drivers/apple_embedded/godot_view_controller.h"
 #import "drivers/apple_embedded/key_mapping_apple_embedded.h"
@@ -463,7 +464,11 @@ bool DisplayServerAppleEmbedded::is_dark_mode_supported() const {
 
 bool DisplayServerAppleEmbedded::is_dark_mode() const {
 	if (@available(iOS 13.0, *)) {
-		return [UITraitCollection currentTraitCollection].userInterfaceStyle == UIUserInterfaceStyleDark;
+		__block bool dark = false;
+		safeDispatchSyncToMain(^{
+			dark = [UITraitCollection currentTraitCollection].userInterfaceStyle == UIUserInterfaceStyleDark;
+		});
+		return dark;
 	} else {
 		return false;
 	}
@@ -795,21 +800,33 @@ bool DisplayServerAppleEmbedded::has_hardware_keyboard() const {
 }
 
 void DisplayServerAppleEmbedded::clipboard_set(const String &p_text) {
-	[UIPasteboard generalPasteboard].string = [NSString stringWithUTF8String:p_text.utf8().get_data()];
+	NSString *text = [NSString stringWithUTF8String:p_text.utf8().get_data()];
+	safeDispatchSyncToMain(^{
+		[UIPasteboard generalPasteboard].string = text;
+	});
 }
 
 String DisplayServerAppleEmbedded::clipboard_get() const {
-	NSString *text = [UIPasteboard generalPasteboard].string;
+	__block NSString *text;
+	safeDispatchSyncToMain(^{
+		text = [UIPasteboard generalPasteboard].string;
+	});
 
 	return String::utf8([text UTF8String]);
 }
 
 void DisplayServerAppleEmbedded::screen_set_keep_on(bool p_enable) {
-	[UIApplication sharedApplication].idleTimerDisabled = p_enable;
+	safeDispatchSyncToMain(^{
+		[UIApplication sharedApplication].idleTimerDisabled = p_enable;
+	});
 }
 
 bool DisplayServerAppleEmbedded::screen_is_kept_on() const {
-	return [UIApplication sharedApplication].idleTimerDisabled;
+	__block bool kept_on = false;
+	safeDispatchSyncToMain(^{
+		kept_on = [UIApplication sharedApplication].idleTimerDisabled;
+	});
+	return kept_on;
 }
 
 void DisplayServerAppleEmbedded::resize_window(CGSize viewSize) {

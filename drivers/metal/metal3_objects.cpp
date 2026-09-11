@@ -1934,6 +1934,10 @@ void MDCommandBuffer::_bind_uniforms_direct(MDUniformSet *p_set, MDShader *p_sha
 			frame_idx = 0;
 		}
 
+		if (!ui.active_stages) {
+			continue;
+		}
+
 		switch (uniform.type) {
 			case RDD::UNIFORM_TYPE_SAMPLER: {
 				size_t count = uniform.ids.size();

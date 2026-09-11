@@ -38,4 +38,6 @@
 
 @property(weak, class, nonatomic, nullable) GDTViewController *viewController;
 
+- (void)onAudioInterruption:(NSNotification *_Nonnull)notification;
+
 @end

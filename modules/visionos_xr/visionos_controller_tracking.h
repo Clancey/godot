@@ -72,6 +72,7 @@ struct VisionOSControllerTracking {
 	// Notification observers
 	id controller_observer = nullptr;
 	id controller_disconnect_observer = nullptr;
+	uint64_t generation = 0;
 
 	void initialize(XRServer *p_xr_server, VisionOSXRInterface *p_xr_interface);
 	void uninitialize(XRServer *p_xr_server);

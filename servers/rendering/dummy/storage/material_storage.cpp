@@ -158,9 +158,22 @@ void MaterialStorage::shader_free(RID p_rid) {
 	shader_owner.free(p_rid);
 }
 
+String MaterialStorage::shader_get_code(RID p_shader) const {
+#ifdef TESTS_ENABLED
+	const DummyShader *shader = shader_owner.get_or_null(p_shader);
+	ERR_FAIL_NULL_V(shader, String());
+	return shader->code;
+#else
+	return "";
+#endif
+}
+
 void MaterialStorage::shader_set_code(RID p_shader, const String &p_code) {
 	DummyShader *shader = shader_owner.get_or_null(p_shader);
 	ERR_FAIL_NULL(shader);
+#ifdef TESTS_ENABLED
+	shader->code = p_code;
+#endif
 	if (p_code.is_empty()) {
 		return;
 	}

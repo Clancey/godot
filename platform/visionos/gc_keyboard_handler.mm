@@ -30,6 +30,8 @@
 
 #import "gc_keyboard_handler.h"
 
+#import "godot_compositor_services_renderer.h"
+
 #include "core/os/keyboard.h"
 #import "drivers/apple_embedded/display_server_apple_embedded.h"
 #import "drivers/apple_embedded/key_mapping_apple_embedded.h"
@@ -180,16 +182,6 @@ void GCKeyboardHandler::setup_keyboard_handler() {
 	}
 
 	keyboard.keyboardInput.keyChangedHandler = ^(GCKeyboardInput *kbInput, GCDeviceButtonInput *key, GCKeyCode keyCode, BOOL pressed) {
-		DisplayServerAppleEmbedded *ds = DisplayServerAppleEmbedded::get_singleton();
-		if (!ds) {
-			return;
-		}
-
-		// Skip if the virtual keyboard is active (soft keyboard for text input).
-		if (ds->is_keyboard_active()) {
-			return;
-		}
-
 		Key godot_key = KeyMappingAppleEmbedded::remap_key(keyCode);
 		if (godot_key == Key::NONE) {
 			return;
@@ -223,7 +215,12 @@ void GCKeyboardHandler::setup_keyboard_handler() {
 			}
 		}
 
-		ds->key(fix_keycode(us, godot_key), typed_char, fix_key_label(us, godot_key), godot_key, modifier_flags, pressed, location);
+		visionos_dispatch_to_engine(^{
+			DisplayServerAppleEmbedded *ds = DisplayServerAppleEmbedded::get_singleton();
+			if (ds && !ds->is_keyboard_active()) {
+				ds->key(fix_keycode(us, godot_key), typed_char, fix_key_label(us, godot_key), godot_key, modifier_flags, pressed, location);
+			}
+		});
 	};
 }
 

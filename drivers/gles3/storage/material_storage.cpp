@@ -2961,6 +2961,16 @@ void SkyMaterialData::bind_uniforms() {
 ////////////////////////////////////////////////////////////////////////////////
 // Scene SHADER
 
+GLenum SceneShaderData::get_depth_compare_operator(DepthTest p_depth_test) {
+	if (p_depth_test == DEPTH_TEST_ENABLED_INVERTED) {
+		return GL_LESS;
+	}
+	if (p_depth_test == DEPTH_TEST_ALWAYS) {
+		return GL_ALWAYS;
+	}
+	return GL_GEQUAL;
+}
+
 void SceneShaderData::set_code(const String &p_code) {
 	// Initialize and compile the shader.
 
@@ -3017,6 +3027,7 @@ void SceneShaderData::set_code(const String &p_code) {
 	int blend_modei = BLEND_MODE_MIX;
 	int depth_test_disabledi = 0;
 	int depth_test_invertedi = 0;
+	int depth_test_alwaysi = 0;
 	int alpha_antialiasing_modei = ALPHA_ANTIALIASING_OFF;
 	int cull_modei = RSE::CULL_MODE_BACK;
 	int depth_drawi = DEPTH_DRAW_OPAQUE;
@@ -3047,6 +3058,7 @@ void SceneShaderData::set_code(const String &p_code) {
 
 	actions.render_mode_values["depth_test_disabled"] = Pair<int *, int>(&depth_test_disabledi, 1);
 	actions.render_mode_values["depth_test_inverted"] = Pair<int *, int>(&depth_test_invertedi, 1);
+	actions.render_mode_values["depth_test_always"] = Pair<int *, int>(&depth_test_alwaysi, 1);
 
 	actions.render_mode_values["cull_disabled"] = Pair<int *, int>(&cull_modei, RSE::CULL_MODE_DISABLED);
 	actions.render_mode_values["cull_front"] = Pair<int *, int>(&cull_modei, RSE::CULL_MODE_FRONT);
@@ -3126,6 +3138,8 @@ void SceneShaderData::set_code(const String &p_code) {
 	depth_draw = DepthDraw(depth_drawi);
 	if (depth_test_disabledi) {
 		depth_test = DEPTH_TEST_DISABLED;
+	} else if (depth_test_alwaysi) {
+		depth_test = DEPTH_TEST_ALWAYS;
 	} else if (depth_test_invertedi) {
 		depth_test = DEPTH_TEST_ENABLED_INVERTED;
 	} else {
@@ -3223,7 +3237,7 @@ bool SceneShaderData::casts_shadows() const {
 	bool has_base_alpha = (uses_alpha && !uses_alpha_clip) || has_read_screen_alpha;
 	bool has_alpha = has_base_alpha || uses_blend_alpha;
 
-	return !has_alpha || (uses_depth_prepass_alpha && !(depth_draw == DEPTH_DRAW_DISABLED || depth_test != DEPTH_TEST_ENABLED));
+	return !has_alpha || (uses_depth_prepass_alpha && !(depth_draw == DEPTH_DRAW_DISABLED || !depth_test_supports_prepass(depth_test)));
 }
 
 RenderingServerTypes::ShaderNativeSourceCode SceneShaderData::get_native_source_code() const {

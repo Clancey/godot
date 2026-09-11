@@ -34,14 +34,31 @@
 
 #import <CompositorServices/CompositorServices.h>
 
+// UIKit never waits for engine work. Windowed mode retains its main-thread owner.
+void visionos_dispatch_to_engine(void (^block)(void));
+void visionos_finish_engine(void);
+
+typedef NS_ENUM(NSInteger, GDTCompositorStartupState) {
+	GDTCompositorStartupStateLoading,
+	GDTCompositorStartupStatePreparingPipelines,
+	GDTCompositorStartupStateTrackingUnavailable,
+	GDTCompositorStartupStateFrameUnavailable,
+	GDTCompositorStartupStateReady,
+	GDTCompositorStartupStateFailed,
+	GDTCompositorStartupStateClosed,
+};
+
 @interface GDTCompositorServicesRenderer : GDTRenderer
+
+@property(nonatomic, readonly) GDTCompositorStartupState startupState;
+@property(nonatomic) BOOL alphaBlendEnabled;
 
 - (instancetype)initWithLayerRenderer:(cp_layer_renderer_t)layer_renderer
 						 capabilities:(cp_layer_renderer_capabilities_t)capabilities;
 
 - (void)updateXRInterface;
 
-- (void)startRenderLoop;
+- (void)startRenderLoopWithCompletion:(void (^)(void))completion;
 - (void)renderFrame;
 - (void)worldRecentered;
 

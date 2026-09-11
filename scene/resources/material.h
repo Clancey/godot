@@ -243,6 +243,7 @@ public:
 	enum DepthTest {
 		DEPTH_TEST_DEFAULT,
 		DEPTH_TEST_INVERTED,
+		DEPTH_TEST_ALWAYS,
 		DEPTH_TEST_MAX
 	};
 
@@ -387,6 +388,7 @@ private:
 		uint64_t grow : 1;
 		uint64_t proximity_fade : 1;
 		uint64_t orm : 1;
+		uint64_t discard_zero_alpha : 1;
 
 		// flag bitfield
 		uint32_t feature_mask;
@@ -441,6 +443,7 @@ private:
 		mk.emission_op = emission_op;
 		mk.alpha_antialiasing_mode = alpha_antialiasing_mode;
 		mk.orm = orm;
+		mk.discard_zero_alpha = discard_zero_alpha;
 
 		mk.stencil_mode = stencil_mode;
 		mk.stencil_flags = stencil_flags;
@@ -628,6 +631,7 @@ private:
 	float stencil_effect_outline_thickness = 0.01f;
 
 	bool features[FEATURE_MAX] = {};
+	bool discard_zero_alpha = false;
 
 	Ref<Texture2D> textures[TEXTURE_MAX];
 
@@ -877,7 +881,7 @@ public:
 	static void finish_shaders();
 	static void flush_changes();
 
-	static Ref<Material> get_material_for_2d(bool p_shaded, Transparency p_transparency, bool p_double_sided, bool p_billboard = false, bool p_billboard_y = false, bool p_msdf = false, bool p_no_depth = false, bool p_fixed_size = false, TextureFilter p_filter = TEXTURE_FILTER_LINEAR_WITH_MIPMAPS, AlphaAntiAliasing p_alpha_antialiasing_mode = ALPHA_ANTIALIASING_OFF, bool p_texture_repeat = false, RID *r_shader_rid = nullptr);
+	static Ref<Material> get_material_for_2d(bool p_shaded, Transparency p_transparency, bool p_double_sided, bool p_billboard = false, bool p_billboard_y = false, bool p_msdf = false, bool p_no_depth = false, bool p_fixed_size = false, TextureFilter p_filter = TEXTURE_FILTER_LINEAR_WITH_MIPMAPS, AlphaAntiAliasing p_alpha_antialiasing_mode = ALPHA_ANTIALIASING_OFF, bool p_texture_repeat = false, RID *r_shader_rid = nullptr, bool p_depth_draw_always = false, bool p_depth_test_always = false);
 
 	virtual RID get_rid() const override;
 	virtual RID get_shader_rid() const override;

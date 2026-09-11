@@ -92,6 +92,7 @@ private:
 			for (KeyValue<uint32_t, WorkerThreadPool::TaskID> key_value : compilation_tasks) {
 				tasks_to_wait.push_back(key_value.value);
 			}
+			compilation_tasks.clear();
 		}
 
 		for (WorkerThreadPool::TaskID task_id : tasks_to_wait) {

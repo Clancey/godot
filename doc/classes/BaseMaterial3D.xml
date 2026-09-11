@@ -161,7 +161,7 @@
 		</member>
 		<member name="depth_test" type="int" setter="set_depth_test" getter="get_depth_test" enum="BaseMaterial3D.DepthTest" default="0" experimental="May be affected by future rendering pipeline changes.">
 			Determines which comparison operator is used when testing depth.
-			[b]Note:[/b] Changing [member depth_test] to a non-default value only has a visible effect when used on a transparent material, or a material that has [member depth_draw_mode] set to [constant DEPTH_DRAW_DISABLED].
+			Non-default comparisons are rendered in the transparent pass. Use [member Material.render_priority] to order these materials. This property is ignored when [member no_depth_test] is [code]true[/code].
 		</member>
 		<member name="detail_albedo" type="Texture2D" setter="set_texture" getter="get_texture">
 			Texture that specifies the color of the detail overlay. [member detail_albedo]'s alpha channel is used as a mask, even when the material is opaque. To use a dedicated texture as a mask, see [member detail_mask].
@@ -699,6 +699,11 @@
 		</constant>
 		<constant name="DEPTH_TEST_INVERTED" value="1" enum="DepthTest">
 			Depth test will discard the pixel if it is in front of other pixels. Useful for stencil effects.
+		</constant>
+		<constant name="DEPTH_TEST_ALWAYS" value="2" enum="DepthTest">
+			Every fragment passes the depth comparison, even behind existing geometry. Unlike [member no_depth_test], depth testing remains enabled, so [member depth_draw_mode] can still write the fragment's geometric depth. Use [constant DEPTH_DRAW_ALWAYS] to write depth for alpha-blended foreground surfaces.
+			With [constant DEPTH_DRAW_ALWAYS], generated fragment alpha equal to exactly zero is discarded. Fractional alpha is not clipped or changed by this mode. Opaque materials without fragment alpha remain opaque; existing alpha-scissor, alpha-hash, alpha-to-coverage, and shadow-to-opacity behavior is not replaced.
+			This intentionally overrides previously drawn scene depth only where the material draws. It does not disable clipping or culling. Depth-writing foreground surfaces can occlude subsequently rendered transparent objects, so use this mode only on the intended surfaces and set appropriate render priorities.
 		</constant>
 		<constant name="CULL_BACK" value="0" enum="CullMode">
 			Default cull mode. The back of the object is culled when not visible. Back face triangles will be culled when facing the camera. This results in only the front side of triangles being drawn. For closed-surface meshes, this means that only the exterior of the mesh will be visible.

@@ -3,4 +3,7 @@ from misc.utility.scons_hints import *
 
 Import("env")
 
-env.add_source_files(env.servers_sources, "*.cpp")
+env_storage = env.Clone()
+if env["tests"]:
+    env_storage.Append(CPPDEFINES=["TESTS_ENABLED"])
+env_storage.add_source_files(env.servers_sources, "*.cpp")

@@ -45,6 +45,7 @@ inline void safeDispatchSyncToMain(void (^block)(void)) {
 @property(assign, readonly, nonatomic) BOOL hasFinishedSetup;
 
 - (BOOL)setUp;
+- (void)performOnEngineThread:(void (^)(void))block;
 - (void)setUpProjectDataShowingBootLogo:(BOOL)p_show_boot_logo;
 
 @end

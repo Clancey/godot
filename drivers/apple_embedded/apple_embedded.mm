@@ -32,6 +32,7 @@
 
 #include "core/object/class_db.h"
 #import "drivers/apple_embedded/godot_app_delegate_service_apple_embedded.h"
+#import "drivers/apple_embedded/godot_renderer.h"
 #import "drivers/apple_embedded/godot_view_controller.h"
 
 #import <CoreHaptics/CoreHaptics.h>
@@ -173,15 +174,17 @@ void AppleEmbedded::alert(const char *p_alert, const char *p_title) {
 	NSString *title = [NSString stringWithUTF8String:p_title];
 	NSString *message = [NSString stringWithUTF8String:p_alert];
 
-	UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
-	UIAlertAction *button = [UIAlertAction actionWithTitle:@"OK"
-													 style:UIAlertActionStyleCancel
-												   handler:^(id){
-												   }];
+	safeDispatchSyncToMain(^{
+		UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+		UIAlertAction *button = [UIAlertAction actionWithTitle:@"OK"
+														 style:UIAlertActionStyleCancel
+													   handler:^(id){
+													   }];
 
-	[alert addAction:button];
+		[alert addAction:button];
 
-	[GDTAppDelegateService.viewController presentViewController:alert animated:YES completion:nil];
+		[GDTAppDelegateService.viewController presentViewController:alert animated:YES completion:nil];
+	});
 }
 
 String AppleEmbedded::get_model() const {

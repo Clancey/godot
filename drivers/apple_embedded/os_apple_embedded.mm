@@ -42,6 +42,7 @@
 #import "drivers/apple/os_log_logger.h"
 #import "drivers/apple_embedded/display_server_apple_embedded.h"
 #import "drivers/apple_embedded/godot_app_delegate_service_apple_embedded.h"
+#import "drivers/apple_embedded/godot_renderer.h"
 #import "drivers/apple_embedded/godot_view_apple_embedded.h"
 #import "drivers/apple_embedded/godot_view_controller.h"
 #ifdef SDL_ENABLED
@@ -382,13 +383,18 @@ Error OS_AppleEmbedded::shell_open(const String &p_uri) {
 	NSString *urlPath = [[NSString alloc] initWithUTF8String:p_uri.utf8().get_data()];
 	NSURL *url = [NSURL URLWithString:urlPath];
 
-	if (![[UIApplication sharedApplication] canOpenURL:url]) {
+	__block bool can_open = false;
+	safeDispatchSyncToMain(^{
+		can_open = [[UIApplication sharedApplication] canOpenURL:url];
+		if (can_open) {
+			[[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
+		}
+	});
+	if (!can_open) {
 		return ERR_CANT_OPEN;
 	}
 
 	print_verbose(vformat("Opening URL %s", p_uri));
-
-	[[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
 
 	return OK;
 }
@@ -477,7 +483,10 @@ Vector<String> OS_AppleEmbedded::get_preferred_locales() const {
 }
 
 String OS_AppleEmbedded::get_unique_id() const {
-	NSString *uuid = [UIDevice currentDevice].identifierForVendor.UUIDString;
+	__block NSString *uuid;
+	safeDispatchSyncToMain(^{
+		uuid = [UIDevice currentDevice].identifierForVendor.UUIDString;
+	});
 	return String::utf8([uuid UTF8String]);
 }
 

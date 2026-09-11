@@ -458,6 +458,19 @@ bool RenderingShaderContainerMetal::_set_code_from_spirv(const ReflectShader &p_
 				const SpvReflectDescriptorBinding &binding = uniform.get_spv_reflect();
 
 				found->active_stages = uniform.stages;
+				if (!msl_options.argument_buffers) {
+					// Unused declarations must not consume scarce direct-binding slots.
+					found->active_stages = 0;
+					for (const ReflectShaderStage &stage : p_spirv) {
+						uint32_t stage_flag = 1 << stage.shader_stage;
+						if ((uniform.stages & stage_flag) && uniform.get_spv_reflect(stage.shader_stage).accessed) {
+							found->active_stages |= stage_flag;
+						}
+					}
+				}
+				auto next_slot_index = [&](IndexType p_type, uint32_t p_stride) -> uint32_t {
+					return found->active_stages ? next_index(p_type, p_stride) : UINT32_MAX;
+				};
 
 				RDC::UniformType type = RDC::UniformType(uniform.type);
 				uint32_t binding_stride = 1; // If this is an array, stride will be the length of the array.
@@ -513,7 +526,7 @@ bool RenderingShaderContainerMetal::_set_code_from_spirv(const ReflectShader &p_
 						break;
 				}
 
-				iter->second = uniform.stages;
+				iter->second = found->active_stages;
 				MSLResourceBinding &rb = iter->first;
 				rb.desc_set = idx_dset;
 				rb.binding = uniform.binding;
@@ -522,7 +535,7 @@ bool RenderingShaderContainerMetal::_set_code_from_spirv(const ReflectShader &p_
 				switch (type) {
 					case RDC::UNIFORM_TYPE_SAMPLER: {
 						found->data_type = MTL::DataTypeSampler;
-						found->get_indexes(UniformData::IndexType::SLOT).sampler = next_index(Sampler, binding_stride);
+						found->get_indexes(UniformData::IndexType::SLOT).sampler = next_slot_index(Sampler, binding_stride);
 						found->get_indexes(UniformData::IndexType::ARG).sampler = next_arg_index(binding_stride);
 
 						rb.basetype = SPIRType::BaseType::Sampler;
@@ -531,8 +544,8 @@ bool RenderingShaderContainerMetal::_set_code_from_spirv(const ReflectShader &p_
 					case RDC::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE:
 					case RDC::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE_BUFFER: {
 						found->data_type = MTL::DataTypeTexture;
-						found->get_indexes(UniformData::IndexType::SLOT).texture = next_index(Texture, binding_stride);
-						found->get_indexes(UniformData::IndexType::SLOT).sampler = next_index(Sampler, binding_stride);
+						found->get_indexes(UniformData::IndexType::SLOT).texture = next_slot_index(Texture, binding_stride);
+						found->get_indexes(UniformData::IndexType::SLOT).sampler = next_slot_index(Sampler, binding_stride);
 						found->get_indexes(UniformData::IndexType::ARG).texture = next_arg_index(binding_stride);
 						found->get_indexes(UniformData::IndexType::ARG).sampler = next_arg_index(binding_stride);
 						rb.basetype = SPIRType::BaseType::SampledImage;
@@ -541,7 +554,7 @@ bool RenderingShaderContainerMetal::_set_code_from_spirv(const ReflectShader &p_
 					case RDC::UNIFORM_TYPE_IMAGE:
 					case RDC::UNIFORM_TYPE_TEXTURE_BUFFER: {
 						found->data_type = MTL::DataTypeTexture;
-						found->get_indexes(UniformData::IndexType::SLOT).texture = next_index(Texture, binding_stride);
+						found->get_indexes(UniformData::IndexType::SLOT).texture = next_slot_index(Texture, binding_stride);
 						found->get_indexes(UniformData::IndexType::ARG).texture = next_arg_index(binding_stride);
 						rb.basetype = SPIRType::BaseType::Image;
 					} break;
@@ -553,13 +566,13 @@ bool RenderingShaderContainerMetal::_set_code_from_spirv(const ReflectShader &p_
 					case RDC::UNIFORM_TYPE_UNIFORM_BUFFER:
 					case RDC::UNIFORM_TYPE_STORAGE_BUFFER: {
 						found->data_type = MTL::DataTypePointer;
-						found->get_indexes(UniformData::IndexType::SLOT).buffer = next_index(Buffer, binding_stride);
+						found->get_indexes(UniformData::IndexType::SLOT).buffer = next_slot_index(Buffer, binding_stride);
 						found->get_indexes(UniformData::IndexType::ARG).buffer = next_arg_index(binding_stride);
 						rb.basetype = SPIRType::BaseType::Void;
 					} break;
 					case RDC::UNIFORM_TYPE_INPUT_ATTACHMENT: {
 						found->data_type = MTL::DataTypeTexture;
-						found->get_indexes(UniformData::IndexType::SLOT).texture = next_index(Texture, binding_stride);
+						found->get_indexes(UniformData::IndexType::SLOT).texture = next_slot_index(Texture, binding_stride);
 						found->get_indexes(UniformData::IndexType::ARG).texture = next_arg_index(binding_stride);
 						rb.basetype = SPIRType::BaseType::Image;
 					} break;
@@ -668,6 +681,9 @@ bool RenderingShaderContainerMetal::_set_code_from_spirv(const ReflectShader &p_
 
 		spv::ExecutionModel execution_model = map_stage(stage);
 		for (uint32_t jj = 0; jj < spirv_bindings.size(); jj++) {
+			if (!msl_options.argument_buffers && !(spirv_bindings[jj].second & (1 << stage))) {
+				continue;
+			}
 			MSLResourceBinding &rb = spirv_bindings.ptr()[jj].first;
 			rb.stage = execution_model;
 			compiler.add_msl_resource_binding(rb);
@@ -678,7 +694,9 @@ bool RenderingShaderContainerMetal::_set_code_from_spirv(const ReflectShader &p_
 			compiler.add_msl_resource_binding(push_constant_resource_binding);
 		}
 
-		std::unordered_set<VariableID> active = compiler.get_active_interface_variables();
+		if (!msl_options.argument_buffers) {
+			compiler.set_enabled_interface_variables(compiler.get_active_interface_variables());
+		}
 		ShaderResources resources = compiler.get_shader_resources();
 
 		std::string source;

@@ -59,6 +59,8 @@ private:
 	real_t pixel_size = 0.005;
 	bool flags[FLAG_MAX] = {};
 	AlphaCutMode alpha_cut = ALPHA_CUT_DISABLED;
+	bool depth_draw_always = false;
+	bool depth_test_always = false;
 	float alpha_scissor_threshold = 0.5;
 	float alpha_hash_scale = 1.0;
 	StandardMaterial3D::AlphaAntiAliasing alpha_antialiasing_mode = StandardMaterial3D::ALPHA_ANTIALIASING_OFF;
@@ -161,6 +163,8 @@ protected:
 	void _queue_update();
 
 	void _shape();
+	real_t _get_glyph_depth_offset(int p_priority) const;
+	int _get_glyph_render_priority(int p_priority) const;
 
 public:
 	void set_horizontal_alignment(HorizontalAlignment p_alignment);
@@ -234,6 +238,10 @@ public:
 	bool get_draw_flag(DrawFlags p_flag) const;
 
 	void set_alpha_cut_mode(AlphaCutMode p_mode);
+	void set_depth_draw_always(bool p_enabled);
+	bool is_depth_draw_always_enabled() const;
+	void set_depth_test_always(bool p_enabled);
+	bool is_depth_test_always_enabled() const;
 	AlphaCutMode get_alpha_cut_mode() const;
 
 	void set_alpha_scissor_threshold(float p_threshold);

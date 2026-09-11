@@ -114,6 +114,10 @@ void Label3D::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_alpha_cut_mode", "mode"), &Label3D::set_alpha_cut_mode);
 	ClassDB::bind_method(D_METHOD("get_alpha_cut_mode"), &Label3D::get_alpha_cut_mode);
+	ClassDB::bind_method(D_METHOD("set_depth_draw_always", "enabled"), &Label3D::set_depth_draw_always);
+	ClassDB::bind_method(D_METHOD("is_depth_draw_always_enabled"), &Label3D::is_depth_draw_always_enabled);
+	ClassDB::bind_method(D_METHOD("set_depth_test_always", "enabled"), &Label3D::set_depth_test_always);
+	ClassDB::bind_method(D_METHOD("is_depth_test_always_enabled"), &Label3D::is_depth_test_always_enabled);
 
 	ClassDB::bind_method(D_METHOD("set_alpha_scissor_threshold", "threshold"), &Label3D::set_alpha_scissor_threshold);
 	ClassDB::bind_method(D_METHOD("get_alpha_scissor_threshold"), &Label3D::get_alpha_scissor_threshold);
@@ -140,6 +144,8 @@ void Label3D::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "shaded"), "set_draw_flag", "get_draw_flag", FLAG_SHADED);
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "double_sided"), "set_draw_flag", "get_draw_flag", FLAG_DOUBLE_SIDED);
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "no_depth_test"), "set_draw_flag", "get_draw_flag", FLAG_DISABLE_DEPTH_TEST);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "depth_draw_always"), "set_depth_draw_always", "is_depth_draw_always_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "depth_test_always"), "set_depth_test_always", "is_depth_test_always_enabled");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "fixed_size"), "set_draw_flag", "get_draw_flag", FLAG_FIXED_SIZE);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "alpha_cut", PROPERTY_HINT_ENUM, "Disabled,Discard,Opaque Pre-Pass,Alpha Hash"), "set_alpha_cut_mode", "get_alpha_cut_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "alpha_scissor_threshold", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_alpha_scissor_threshold", "get_alpha_scissor_threshold");
@@ -395,13 +401,16 @@ void Label3D::_generate_glyph_surfaces(const Glyph &p_glyph, Vector2 &r_offset, 
 			}
 
 			RID shader_rid;
-			StandardMaterial3D::get_material_for_2d(get_draw_flag(FLAG_SHADED), mat_transparency, get_draw_flag(FLAG_DOUBLE_SIDED), get_billboard_mode() == StandardMaterial3D::BILLBOARD_ENABLED, get_billboard_mode() == StandardMaterial3D::BILLBOARD_FIXED_Y, msdf, get_draw_flag(FLAG_DISABLE_DEPTH_TEST), get_draw_flag(FLAG_FIXED_SIZE), texture_filter, alpha_antialiasing_mode, false, &shader_rid);
+			StandardMaterial3D::get_material_for_2d(get_draw_flag(FLAG_SHADED), mat_transparency, get_draw_flag(FLAG_DOUBLE_SIDED), get_billboard_mode() == StandardMaterial3D::BILLBOARD_ENABLED, get_billboard_mode() == StandardMaterial3D::BILLBOARD_FIXED_Y, msdf, get_draw_flag(FLAG_DISABLE_DEPTH_TEST), get_draw_flag(FLAG_FIXED_SIZE), texture_filter, alpha_antialiasing_mode, false, &shader_rid, depth_draw_always, depth_test_always);
 
 			RS::get_singleton()->material_set_shader(surf.material, shader_rid);
 			RS::get_singleton()->material_set_param(surf.material, "texture_albedo", tex);
 			RS::get_singleton()->material_set_param(surf.material, "albedo_texture_size", texs);
+			RS::get_singleton()->material_set_render_priority(surf.material, _get_glyph_render_priority(p_priority));
 			if (get_alpha_cut_mode() == ALPHA_CUT_DISABLED) {
-				RS::get_singleton()->material_set_render_priority(surf.material, p_priority);
+				if (depth_draw_always) {
+					RS::get_singleton()->material_set_param(surf.material, "glyph_depth_offset", _get_glyph_depth_offset(p_priority));
+				}
 			} else {
 				surf.z_shift = p_priority * pixel_size;
 			}
@@ -1018,6 +1027,36 @@ void Label3D::set_alpha_cut_mode(AlphaCutMode p_mode) {
 		_queue_update();
 		notify_property_list_changed();
 	}
+}
+
+void Label3D::set_depth_draw_always(bool p_enabled) {
+	if (depth_draw_always != p_enabled) {
+		depth_draw_always = p_enabled;
+		_queue_update();
+	}
+}
+
+bool Label3D::is_depth_draw_always_enabled() const {
+	return depth_draw_always;
+}
+
+void Label3D::set_depth_test_always(bool p_enabled) {
+	if (depth_test_always != p_enabled) {
+		depth_test_always = p_enabled;
+		_queue_update();
+	}
+}
+
+bool Label3D::is_depth_test_always_enabled() const {
+	return depth_test_always;
+}
+
+real_t Label3D::_get_glyph_depth_offset(int p_priority) const {
+	return depth_draw_always && alpha_cut == ALPHA_CUT_DISABLED ? p_priority * pixel_size : 0.0;
+}
+
+int Label3D::_get_glyph_render_priority(int p_priority) const {
+	return alpha_cut == ALPHA_CUT_DISABLED || (depth_test_always && !get_draw_flag(FLAG_DISABLE_DEPTH_TEST)) ? p_priority : 0;
 }
 
 void Label3D::set_texture_filter(StandardMaterial3D::TextureFilter p_filter) {
