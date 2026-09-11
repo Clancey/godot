@@ -137,6 +137,24 @@ TEST_CASE("[visionOS][WorldAnchors] Provider transitions invalidate without an e
 	CHECK_FALSE(provider.store->get_status().running);
 }
 
+TEST_CASE("[visionOS][WorldAnchors] Production provider sampling fences a stop during a stale running query") {
+	FakeProvider provider;
+	uint64_t observer = provider.store->watch_provider();
+	auto sampled = provider.store->sample_provider_state([&] {
+		std::thread callback([owned = provider.store, observer] {
+			owned->provider_changed(observer);
+		});
+		callback.join();
+		return true;
+	});
+	CHECK(sampled.running);
+	CHECK(sampled.revision < provider.store->get_status().provider_revision);
+	CHECK(provider.store->start(sampled.revision) == 0);
+	CHECK_FALSE(provider.store->get_status().running);
+	auto resumed = provider.store->sample_provider_state([] { return true; });
+	CHECK(provider.store->start(resumed.revision) != 0);
+}
+
 TEST_CASE("[visionOS][WorldAnchors] Native timestamps reject late updates after a current snapshot") {
 	FakeProvider provider;
 	Store::Anchor old;
