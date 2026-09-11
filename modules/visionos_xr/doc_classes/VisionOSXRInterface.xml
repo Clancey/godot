@@ -24,10 +24,18 @@
 		Enable the spatial controller module using the [member ProjectSettings.xr/visionos/enable_controller_tracking] project setting. It will populate the [code]"left_hand"[/code] and [code]"right_hand"[/code] reserved XRController trackers.
 		[b]Hand gestures:[/b] ARKit does not report gestures directly, so pinch and grasp are derived from joint positions. The [code]/user/hand_tracker/left[/code] and [code]/user/hand_tracker/right[/code] [XRHandTracker]s always carry [code]pinch[/code], [code]pinch_click[/code], [code]grasp[/code], and [code]grasp_click[/code] inputs. Those gestures are also mirrored onto the [code]left_hand[/code] and [code]right_hand[/code] [XRControllerTracker]s as [code]trigger[/code]/[code]trigger_click[/code] and [code]grip[/code]/[code]grip_click[/code], so gameplay built on [XRController3D] works without a physical accessory. A hand that has a spatial controller attached is driven by that controller instead.
 		[b]Passthrough:[/b] [member XRInterface.environment_blend_mode] is a portable view of [member immersion_style]. Full immersion reports [constant XRInterface.XR_ENV_BLEND_MODE_OPAQUE], while mixed and progressive immersion report [constant XRInterface.XR_ENV_BLEND_MODE_ALPHA_BLEND]. Setting it changes the immersion style to match. Whenever passthrough is visible the root viewport is switched to a transparent background, because CompositorServices composites passthrough where alpha is [code]0[/code].
-		[b]Scene understanding:[/b] enable plane detection, scene reconstruction, or world anchors with the [code]xr/visionos/scene_understanding/*[/code] project settings. Detected geometry is exposed through [VisionOSPlaneTracker] and [VisionOSMeshTracker], and anchors through [VisionOSAnchorTracker] and the [VisionOSSpatialAnchorCapability] singleton. These require the world sensing authorization.
+		[b]Scene understanding:[/b] enable plane detection, scene reconstruction, or world anchors with the [code]xr/visionos/scene_understanding/*[/code] project settings. Detected geometry is exposed through [VisionOSPlaneTracker] and [VisionOSMeshTracker], and anchors through [VisionOSAnchorTracker] and the [VisionOSSpatialAnchorCapability] singleton. Plane detection and scene reconstruction require world-sensing authorization; ordinary local world anchors do not. Anchor requests can also enable anchor observation lazily after native initialization, without enabling scanning.
 	</description>
 	<tutorials>
 	</tutorials>
+	<methods>
+		<method name="get_spatial_anchor_capability" qualifiers="const">
+			<return type="VisionOSSpatialAnchorCapability" />
+			<description>
+				Returns the same capability available through [method Engine.get_singleton] as [code]VisionOSSpatialAnchorCapability[/code]. This does not create another ARKit session or world tracking provider. Check its status before requesting or applying an anchor pose.
+			</description>
+		</method>
+	</methods>
 	<members>
 		<member name="immersion_style" type="int" setter="set_immersion_style" getter="get_immersion_style" enum="VisionOSXRInterface.ImmersionStyle" default="0">
 			Immersion style of the immersive scene. Its initial value comes from the [member EditorExportPlatformVisionOS.application/immersion_style] export setting.

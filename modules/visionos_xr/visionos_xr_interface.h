@@ -42,6 +42,7 @@
 #include <vector>
 
 class VisionOSPresentation;
+class VisionOSSpatialAnchorCapability;
 struct VisionOSSceneOutput;
 struct VisionOSSceneGeometry;
 
@@ -64,6 +65,7 @@ class VisionOSXRInterface : public XRInterface {
 	GDCLASS(VisionOSXRInterface, XRInterface);
 
 public:
+	VisionOSSpatialAnchorCapability *get_spatial_anchor_capability() const;
 	enum SignalEnum {
 		VISIONOS_XR_SIGNAL_SESSION_STARTED,
 		VISIONOS_XR_SIGNAL_SESSION_PAUSED,

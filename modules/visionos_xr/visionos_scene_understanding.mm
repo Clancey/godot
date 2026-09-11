@@ -33,6 +33,8 @@
 #include "visionos_scene_understanding.h"
 
 #include "visionos_simd_helpers.h"
+#include "visionos_spatial_anchor_capability.h"
+#include "visionos_tracking.h"
 
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
@@ -42,6 +44,7 @@
 #import <ARKit/scene_reconstruction.h>
 #import <ARKit/world_tracking.h>
 #import <Metal/Metal.h>
+#import <QuartzCore/QuartzCore.h>
 
 static Transform3D _simd4x4_to_transform3d(const simd_float4x4 &p_matrix) {
 	return MTL::simd_to_transform3D(p_matrix);
@@ -77,6 +80,7 @@ void VisionOSSceneUnderstanding::configure_from_project_settings() {
 }
 
 void VisionOSSceneUnderstanding::initialize(ar_session_t p_session, ar_world_tracking_provider_t p_world_tracking_provider) {
+	lifecycle_revision++;
 	ar_session = p_session;
 	world_tracking_provider = p_world_tracking_provider;
 
@@ -86,18 +90,34 @@ void VisionOSSceneUnderstanding::initialize(ar_session_t p_session, ar_world_tra
 	if (scene_reconstruction_enabled) {
 		setup_scene_reconstruction();
 	}
-	if (world_anchors_enabled) {
-		setup_world_anchors();
+	// Install anchor handlers only once the presenter's existing provider is running.
+	if (world_anchors_enabled && is_world_anchor_supported()) {
+		setup_anchor_lifecycle();
 	}
 }
 
 void VisionOSSceneUnderstanding::uninitialize() {
+	if (uninitializing) {
+		return;
+	}
+	uninitializing = true;
+	lifecycle_revision++;
 	XRServer *xr_server = XRServer::get_singleton();
 
 	// Teardown providers (clears update handlers).
 	teardown_plane_detection();
 	teardown_scene_reconstruction();
 	teardown_world_anchors();
+	anchor_store->unwatch_provider();
+	if (anchor_lifecycle_installed && ar_session != nullptr) {
+		visionos_tracking_access().perform([&] {
+			ar_session_set_data_provider_state_change_handler(ar_session, nullptr, nullptr);
+		});
+	}
+	anchor_lifecycle_installed = false;
+	if (VisionOSSpatialAnchorCapability::get_singleton()) {
+		VisionOSSpatialAnchorCapability::get_singleton()->process();
+	}
 
 	// Remove all trackers from XR server.
 	if (xr_server) {
@@ -107,7 +127,11 @@ void VisionOSSceneUnderstanding::uninitialize() {
 		for (const KeyValue<uint64_t, Ref<VisionOSMeshTracker>> &kv : mesh_trackers) {
 			xr_server->remove_tracker(kv.value);
 		}
-		for (const KeyValue<uint64_t, Ref<VisionOSAnchorTracker>> &kv : anchor_trackers) {
+		const auto old_anchor_trackers = anchor_trackers;
+		anchor_trackers.clear();
+		for (const KeyValue<String, Ref<VisionOSAnchorTracker>> &kv : old_anchor_trackers) {
+			kv.value->invalidate_pose(SNAME("default"));
+			kv.value->set_anchor_tracked(false);
 			xr_server->remove_tracker(kv.value);
 		}
 	}
@@ -115,7 +139,6 @@ void VisionOSSceneUnderstanding::uninitialize() {
 	plane_trackers.clear();
 	mesh_trackers.clear();
 	anchor_trackers.clear();
-	created_anchor_uuids.clear();
 
 	{
 		MutexLock lock(plane_mutex);
@@ -125,15 +148,12 @@ void VisionOSSceneUnderstanding::uninitialize() {
 		MutexLock lock(mesh_mutex);
 		pending_mesh_updates.clear();
 	}
-	{
-		MutexLock lock(anchor_mutex);
-		pending_anchor_updates.clear();
-	}
 
 	ar_session = nullptr;
 	world_tracking_provider = nullptr;
 	plane_detection_provider = nullptr;
 	scene_reconstruction_provider = nullptr;
+	uninitializing = false;
 }
 
 void VisionOSSceneUnderstanding::add_providers_to(ar_data_providers_t p_data_providers) {
@@ -147,9 +167,14 @@ void VisionOSSceneUnderstanding::add_providers_to(ar_data_providers_t p_data_pro
 }
 
 void VisionOSSceneUnderstanding::process() {
-	process_plane_updates();
-	process_mesh_updates();
+	if (active()) {
+		process_plane_updates();
+		process_mesh_updates();
+	}
 	process_anchor_updates();
+	if (VisionOSSpatialAnchorCapability::get_singleton()) {
+		VisionOSSpatialAnchorCapability::get_singleton()->process();
+	}
 }
 
 // ============================================================================
@@ -683,163 +708,168 @@ void VisionOSSceneUnderstanding::process_mesh_updates() {
 // World Anchors
 // ============================================================================
 
+static VisionOSWorldAnchorStore::Anchor world_anchor_record(ar_world_anchor_t p_anchor) {
+	VisionOSWorldAnchorStore::Anchor result;
+	uuid_t uuid;
+	char text[37];
+	ar_world_anchor_get_identifier(p_anchor, uuid);
+	uuid_unparse_lower(uuid, text);
+	result.uuid = text;
+	result.transform = MTL::simd_to_transform3D(ar_world_anchor_get_origin_from_anchor_transform(p_anchor));
+	result.tracked = ar_world_anchor_is_tracked(p_anchor) && VisionOSWorldAnchorStore::is_valid_transform(result.transform);
+	result.shared = ar_world_anchor_is_shared_with_nearby_participants(p_anchor);
+	result.observation_time = ar_world_anchor_get_timestamp(p_anchor);
+	return result;
+}
+
+static std::string world_anchor_error(ar_error_t p_error, bool p_success) {
+	if (p_error == nullptr) {
+		return p_success ? "" : "ARKit world anchor operation failed without an error description.";
+	}
+	CFErrorRef error = ar_error_copy_cf_error(p_error);
+	CFStringRef description = CFErrorCopyDescription(error);
+	char buffer[1024];
+	std::string result = CFStringGetCString(description, buffer, sizeof(buffer), kCFStringEncodingUTF8) ? buffer : "ARKit world anchor operation failed.";
+	CFRelease(description);
+	CFRelease(error);
+	return result;
+}
+
+void VisionOSSceneUnderstanding::setup_anchor_lifecycle() {
+	if (anchor_lifecycle_installed || ar_session == nullptr || world_tracking_provider == nullptr) {
+		return;
+	}
+	const auto store = anchor_store;
+	const uint64_t observer = store->watch_provider();
+	ar_world_tracking_provider_t provider = world_tracking_provider;
+	visionos_tracking_access().perform([&] {
+		ar_session_set_data_provider_state_change_handler(ar_session,
+				dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
+				^(ar_data_providers_t providers, ar_data_provider_state_t state, ar_error_t error, ar_data_provider_t failed_provider) {
+					ar_data_providers_enumerate_data_providers(providers, ^bool(ar_data_provider_t changed_provider) {
+						if (changed_provider == provider) {
+							store->provider_changed(observer);
+							return false;
+						}
+						return true;
+					});
+				});
+	});
+	anchor_lifecycle_installed = true;
+}
+
 void VisionOSSceneUnderstanding::setup_world_anchors() {
 	ERR_FAIL_NULL(world_tracking_provider);
-
-	ar_world_tracking_provider_set_anchor_update_handler(world_tracking_provider,
-			dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
-			^(ar_world_anchors_t added, ar_world_anchors_t updated, ar_world_anchors_t removed) {
-				__block LocalVector<AnchorUpdate> updates;
-
-				ar_world_anchors_enumerate_anchors(added, ^bool(ar_world_anchor_t anchor) {
-					AnchorUpdate upd;
-					upd.type = AnchorUpdate::ADDED;
-
-					uuid_t uuid;
-					ar_world_anchor_get_identifier(anchor, uuid);
-					upd.anchor_id_hash = uuid_to_hash(uuid);
-					upd.anchor_uuid_str = uuid_to_string(uuid);
-					upd.transform = _simd4x4_to_transform3d(ar_world_anchor_get_origin_from_anchor_transform(anchor));
-					upd.is_tracked = ar_world_anchor_is_tracked(anchor);
-					upd.is_shared = ar_world_anchor_is_shared_with_nearby_participants(anchor);
-
-					updates.push_back(upd);
-					return true;
-				});
-
-				ar_world_anchors_enumerate_anchors(updated, ^bool(ar_world_anchor_t anchor) {
-					AnchorUpdate upd;
-					upd.type = AnchorUpdate::UPDATED;
-
-					uuid_t uuid;
-					ar_world_anchor_get_identifier(anchor, uuid);
-					upd.anchor_id_hash = uuid_to_hash(uuid);
-					upd.anchor_uuid_str = uuid_to_string(uuid);
-					upd.transform = _simd4x4_to_transform3d(ar_world_anchor_get_origin_from_anchor_transform(anchor));
-					upd.is_tracked = ar_world_anchor_is_tracked(anchor);
-					upd.is_shared = ar_world_anchor_is_shared_with_nearby_participants(anchor);
-
-					updates.push_back(upd);
-					return true;
-				});
-
-				ar_world_anchors_enumerate_anchors(removed, ^bool(ar_world_anchor_t anchor) {
-					AnchorUpdate upd;
-					upd.type = AnchorUpdate::REMOVED;
-
-					uuid_t uuid;
-					ar_world_anchor_get_identifier(anchor, uuid);
-					upd.anchor_id_hash = uuid_to_hash(uuid);
-					upd.anchor_uuid_str = uuid_to_string(uuid);
-					upd.is_tracked = false;
-
-					updates.push_back(upd);
-					return true;
-				});
-
-				if (updates.size() > 0) {
-					MutexLock lock(anchor_mutex);
-					for (uint32_t i = 0; i < updates.size(); i++) {
-						pending_anchor_updates.push_back(updates[i]);
+	const auto store = anchor_store;
+	const uint64_t generation = store->start(anchor_provider_revision);
+	if (!generation) {
+		return;
+	}
+	anchor_sharing_available = std::make_shared<SafeFlag>();
+	const auto sharing = anchor_sharing_available;
+	anchor_handlers_installed = true;
+	visionos_tracking_access().perform([&] {
+		ar_world_tracking_provider_set_anchor_update_handler(world_tracking_provider,
+				dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
+				^(ar_world_anchors_t added, ar_world_anchors_t updated, ar_world_anchors_t removed) {
+					for (int kind = 0; kind < 3; kind++) {
+						ar_world_anchors_t collection = kind == 0 ? added : (kind == 1 ? updated : removed);
+						if (collection == nullptr) {
+							continue;
+						}
+						ar_world_anchors_enumerate_anchors(collection, ^bool(ar_world_anchor_t anchor) {
+							store->update(generation, world_anchor_record(anchor), kind == 2);
+							return true;
+						});
 					}
-				}
-			});
-
-	// Monitor anchor sharing availability (SharePlay with nearby participants).
-	ar_world_tracking_provider_set_world_anchor_sharing_availability_update_handler(world_tracking_provider,
-			dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0),
-			^(ar_world_anchor_sharing_availability_t sharing_availability) {
-				if (sharing_availability == ar_world_anchor_sharing_availability_available) {
-					anchor_sharing_available.set();
-					print_verbose("visionOS: World anchor sharing is now available (SharePlay session active).");
-				} else {
-					anchor_sharing_available.clear();
-					print_verbose("visionOS: World anchor sharing is no longer available.");
-				}
-			});
-
-	print_verbose("visionOS: World anchor tracking initialized.");
+				});
+		ar_world_tracking_provider_set_world_anchor_sharing_availability_update_handler(world_tracking_provider,
+				dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0),
+				^(ar_world_anchor_sharing_availability_t availability) {
+					if (store->get_status().generation == generation && store->get_status().running) {
+						sharing->set_to(availability == ar_world_anchor_sharing_availability_available);
+					}
+				});
+	});
+	initial_enumeration_request = submit_anchor_enumeration(!enumeration_for_caller);
 }
 
 void VisionOSSceneUnderstanding::teardown_world_anchors() {
-	if (world_tracking_provider != nullptr) {
-		ar_world_tracking_provider_set_anchor_update_handler(world_tracking_provider, nullptr, nullptr);
-		ar_world_tracking_provider_set_world_anchor_sharing_availability_update_handler(world_tracking_provider, nullptr, nullptr);
+	anchor_store->stop();
+	if (anchor_handlers_installed && world_tracking_provider != nullptr) {
+		visionos_tracking_access().perform([&] {
+			ar_world_tracking_provider_set_anchor_update_handler(world_tracking_provider, nullptr, nullptr);
+			ar_world_tracking_provider_set_world_anchor_sharing_availability_update_handler(world_tracking_provider, nullptr, nullptr);
+		});
 	}
-	anchor_sharing_available.clear();
+	anchor_handlers_installed = false;
+	anchor_provider_running = false;
+	anchor_sharing_available->clear();
 }
 
 void VisionOSSceneUnderstanding::process_anchor_updates() {
-	LocalVector<AnchorUpdate> updates;
-	{
-		MutexLock lock(anchor_mutex);
-		updates = pending_anchor_updates;
-		pending_anchor_updates.clear();
-	}
-
-	if (updates.size() == 0) {
+	if (!world_anchors_enabled || uninitializing) {
 		return;
 	}
-
+	const uint64_t lifecycle = lifecycle_revision;
+	const bool running = is_world_anchor_supported() && world_tracking_provider != nullptr &&
+			visionos_tracking_access().perform([&] { return ar_data_provider_get_state(world_tracking_provider) == ar_data_provider_state_running; });
+	const uint64_t provider_revision = anchor_store->get_status().provider_revision;
+	if (running != anchor_provider_running || provider_revision != anchor_provider_revision) {
+		anchor_provider_revision = provider_revision;
+		teardown_world_anchors();
+		const auto old_anchor_trackers = anchor_trackers;
+		anchor_trackers.clear();
+		for (const KeyValue<String, Ref<VisionOSAnchorTracker>> &entry : old_anchor_trackers) {
+			entry.value->invalidate_pose(SNAME("default"));
+			entry.value->set_anchor_tracked(false);
+			XRServer::get_singleton()->remove_tracker(entry.value);
+			if (lifecycle != lifecycle_revision) {
+				return;
+			}
+		}
+		if (running) {
+			anchor_provider_running = true;
+			setup_world_anchors();
+		}
+	}
 	XRServer *xr_server = XRServer::get_singleton();
 	ERR_FAIL_NULL(xr_server);
-
-	for (uint32_t i = 0; i < updates.size(); i++) {
-		const AnchorUpdate &upd = updates[i];
-
-		switch (upd.type) {
-			case AnchorUpdate::ADDED: {
-				// Check if we already have a tracker for this anchor (created via create_anchor).
-				Ref<VisionOSAnchorTracker> *existing_ptr = anchor_trackers.getptr(upd.anchor_id_hash);
-				if (existing_ptr != nullptr) {
-					// Update the existing tracker with confirmed data from ARKit.
-					Ref<VisionOSAnchorTracker> tracker = *existing_ptr;
-					tracker->set_pose(SNAME("default"), upd.transform, Vector3(), Vector3());
-					tracker->set_anchor_tracked(upd.is_tracked);
-					tracker->set_shared_with_nearby_participants(upd.is_shared);
-				} else {
-					// New anchor discovered (e.g. persisted anchor from a previous session, or shared from another device).
-					Ref<VisionOSAnchorTracker> tracker;
-					tracker.instantiate();
-					tracker->set_tracker_name("visionos/anchor/" + upd.anchor_uuid_str);
-					tracker->set_tracker_desc(upd.is_shared ? "Shared world anchor" : "World anchor");
-					tracker->set_anchor_uuid(upd.anchor_uuid_str);
-
-					tracker->set_pose(SNAME("default"), upd.transform, Vector3(), Vector3());
-					tracker->set_anchor_tracked(upd.is_tracked);
-					tracker->set_shared_with_nearby_participants(upd.is_shared);
-
-					anchor_trackers[upd.anchor_id_hash] = tracker;
-					xr_server->add_tracker(tracker);
-				}
-			} break;
-
-			case AnchorUpdate::UPDATED: {
-				Ref<VisionOSAnchorTracker> *tracker_ptr = anchor_trackers.getptr(upd.anchor_id_hash);
-				if (tracker_ptr == nullptr) {
-					break;
-				}
-				Ref<VisionOSAnchorTracker> tracker = *tracker_ptr;
-
-				tracker->set_pose(SNAME("default"), upd.transform, Vector3(), Vector3());
-				tracker->set_anchor_tracked(upd.is_tracked);
-				tracker->set_shared_with_nearby_participants(upd.is_shared);
-			} break;
-
-			case AnchorUpdate::REMOVED: {
-				Ref<VisionOSAnchorTracker> *tracker_ptr = anchor_trackers.getptr(upd.anchor_id_hash);
-				if (tracker_ptr == nullptr) {
-					break;
-				}
-				Ref<VisionOSAnchorTracker> tracker = *tracker_ptr;
-
-				tracker->invalidate_pose(SNAME("default"));
-				tracker->set_anchor_tracked(false);
-				xr_server->remove_tracker(tracker);
-				anchor_trackers.erase(upd.anchor_id_hash);
-
-				created_anchor_uuids.erase(upd.anchor_uuid_str);
-			} break;
+	// Invalidate old-generation trackers even if the new enumeration has not arrived.
+	for (const auto &anchor : anchor_store->get_anchors()) {
+		String uuid = String::utf8(anchor.uuid.c_str());
+		if (anchor.removed && !anchor_trackers.has(uuid)) {
+			continue;
+		}
+		Ref<VisionOSAnchorTracker> tracker;
+		if (anchor_trackers.has(uuid)) {
+			tracker = anchor_trackers[uuid];
+		} else {
+			tracker.instantiate();
+			tracker->set_anchor_uuid(uuid);
+			tracker->set_tracker_name("visionos/anchor/" + uuid);
+			anchor_trackers[uuid] = tracker;
+			xr_server->add_tracker(tracker);
+			if (lifecycle != lifecycle_revision) {
+				return;
+			}
+		}
+		tracker->set_shared_with_nearby_participants(anchor.shared);
+		if (anchor.tracked) {
+			tracker->set_pose(SNAME("default"), anchor.transform, Vector3(), Vector3());
+		} else {
+			tracker->invalidate_pose(SNAME("default"));
+		}
+		tracker->set_anchor_tracked(anchor.tracked);
+		if (lifecycle != lifecycle_revision) {
+			return;
+		}
+		if (anchor.removed) {
+			anchor_trackers.erase(uuid);
+			xr_server->remove_tracker(tracker);
+			if (lifecycle != lifecycle_revision) {
+				return;
+			}
 		}
 	}
 }
@@ -849,22 +879,40 @@ void VisionOSSceneUnderstanding::process_anchor_updates() {
 // ============================================================================
 
 Ref<VisionOSAnchorTracker> VisionOSSceneUnderstanding::create_anchor(const Transform3D &p_transform, bool p_shared_with_nearby_participants) {
-	ERR_FAIL_NULL_V(world_tracking_provider, Ref<VisionOSAnchorTracker>());
-
-	if (!world_anchors_enabled) {
-		ERR_PRINT("visionOS: World anchors are not enabled. Set xr/visionos/scene_understanding/enable_world_anchors to true.");
+	uint64_t request = request_create_anchor(p_transform, p_shared_with_nearby_participants);
+	if (!request) {
+		ERR_PRINT(String::utf8(anchor_store->get_last_error().c_str()));
 		return Ref<VisionOSAnchorTracker>();
 	}
-
-	if (p_shared_with_nearby_participants && !anchor_sharing_available.is_set()) {
-		WARN_PRINT("visionOS: Anchor sharing requested but not available (no active SharePlay session with nearby participants). Creating local anchor instead.");
-		p_shared_with_nearby_participants = false;
+	for (const auto &anchor : anchor_store->get_anchors()) {
+		if (anchor.create_request == request || anchor.uuid == last_created_uuid) {
+			String uuid = String::utf8(anchor.uuid.c_str());
+			Ref<VisionOSAnchorTracker> tracker;
+			tracker.instantiate();
+			tracker->set_anchor_uuid(uuid);
+			tracker->set_tracker_name("visionos/anchor/" + uuid);
+			tracker->set_shared_with_nearby_participants(p_shared_with_nearby_participants);
+			anchor_trackers[uuid] = tracker;
+			XRServer::get_singleton()->add_tracker(tracker);
+			VisionOSSpatialAnchorCapability::get_singleton()->track_legacy_request(request, tracker);
+			return tracker;
+		}
 	}
+	return Ref<VisionOSAnchorTracker>();
+}
 
-	// Convert Transform3D to simd_float4x4.
+uint64_t VisionOSSceneUnderstanding::request_create_anchor(const Transform3D &p_transform, bool p_shared) {
+	if (!activate_world_anchors()) {
+		return anchor_store->reject("Local world anchors require an enabled, running native world tracking provider.");
+	}
+	if (!VisionOSWorldAnchorStore::is_valid_transform(p_transform)) {
+		return anchor_store->reject("Anchor transform must be a finite rigid transform in raw tracking-origin meters.");
+	}
+	if (p_shared && !is_anchor_sharing_available()) {
+		return anchor_store->reject("Shared anchors are unavailable; local fallback is not permitted.");
+	}
 	Basis b = p_transform.basis;
 	Vector3 o = p_transform.origin;
-
 	simd_float4x4 mat = {
 		(simd_float4){ (float)b[0][0], (float)b[1][0], (float)b[2][0], 0.0f },
 		(simd_float4){ (float)b[0][1], (float)b[1][1], (float)b[2][1], 0.0f },
@@ -872,73 +920,122 @@ Ref<VisionOSAnchorTracker> VisionOSSceneUnderstanding::create_anchor(const Trans
 		(simd_float4){ (float)o.x, (float)o.y, (float)o.z, 1.0f }
 	};
 
-	ar_world_anchor_t anchor;
-	if (p_shared_with_nearby_participants) {
-		anchor = ar_world_anchor_shared_with_nearby_participants_create(mat);
-	} else {
-		anchor = ar_world_anchor_create_with_origin_from_anchor_transform(mat);
+	ar_world_anchor_t anchor = p_shared ? ar_world_anchor_shared_with_nearby_participants_create(mat) : ar_world_anchor_create_with_origin_from_anchor_transform(mat);
+	if (anchor == nullptr) {
+		return anchor_store->reject("ARKit could not allocate a world anchor.");
 	}
-
-	ar_world_tracking_provider_add_anchor(world_tracking_provider, anchor, ^(ar_world_anchor_t p_anchor, bool successful, ar_error_t error) {
-		if (!successful) {
-			print_verbose("visionOS: Failed to add world anchor.");
-		}
-	});
-
-	// The anchor will appear via the update handler when ARKit confirms it.
-	// We return a placeholder tracker here. The real tracking data will arrive
-	// through the update handler and be matched by UUID.
 	uuid_t uuid;
 	ar_world_anchor_get_identifier(anchor, uuid);
-	String uuid_str = uuid_to_string(uuid);
-
-	created_anchor_uuids.insert(uuid_str);
-
-	// Create a temporary tracker that will be updated when ARKit confirms.
-	Ref<VisionOSAnchorTracker> tracker;
-	tracker.instantiate();
-	tracker->set_tracker_name("visionos/anchor/" + uuid_str);
-	tracker->set_tracker_desc(p_shared_with_nearby_participants ? "Shared world anchor" : "World anchor");
-	tracker->set_anchor_uuid(uuid_str);
-	tracker->set_pose(SNAME("default"), p_transform, Vector3(), Vector3());
-	tracker->set_anchor_tracked(false); // Not confirmed yet.
-	tracker->set_shared_with_nearby_participants(p_shared_with_nearby_participants);
-
-	uint64_t hash = uuid_to_hash(uuid);
-	anchor_trackers[hash] = tracker;
-
-	XRServer *xr_server = XRServer::get_singleton();
-	if (xr_server) {
-		xr_server->add_tracker(tracker);
+	char text[37];
+	uuid_unparse_lower(uuid, text);
+	const auto store = anchor_store;
+	const uint64_t generation = store->get_status().generation;
+	const uint64_t request = store->begin("create", text, p_transform, p_shared);
+	if (request) {
+		last_created_uuid = text;
+		visionos_tracking_access().perform([&] {
+			ar_world_tracking_provider_add_anchor(world_tracking_provider, anchor, ^(ar_world_anchor_t p_anchor, bool successful, ar_error_t error) {
+				store->complete(generation, request, successful && error == nullptr, error ? ar_error_get_error_code(error) : FAILED, world_anchor_error(error, successful));
+			});
+		});
 	}
-
-	return tracker;
+	return request;
 }
 
 void VisionOSSceneUnderstanding::remove_anchor(Ref<VisionOSAnchorTracker> p_anchor) {
-	ERR_FAIL_NULL(world_tracking_provider);
 	ERR_FAIL_COND(p_anchor.is_null());
+	uint64_t request = request_remove_anchor(p_anchor->get_anchor_uuid());
+	if (!request) {
+		ERR_PRINT(String::utf8(anchor_store->get_last_error().c_str()));
+	} else {
+		VisionOSSpatialAnchorCapability::get_singleton()->track_legacy_request(request, p_anchor);
+	}
+}
 
-	String uuid_str = p_anchor->get_anchor_uuid();
-
-	// Remove by identifier - avoids storing ObjC anchor objects in C++ containers.
+uint64_t VisionOSSceneUnderstanding::request_remove_anchor(const String &p_uuid) {
+	if (!activate_world_anchors()) {
+		return anchor_store->reject("World tracking is unavailable.");
+	}
 	uuid_t uuid;
-	CharString uuid_utf8 = uuid_str.utf8();
-	if (uuid_parse(uuid_utf8.get_data(), uuid) == 0) {
-		ar_world_tracking_provider_remove_anchor_with_identifier(world_tracking_provider, uuid, ^(ar_world_anchor_t p_removed_anchor, bool successful, ar_error_t error) {
-			if (!successful) {
-				print_verbose("visionOS: Failed to remove world anchor.");
-			}
+	if (uuid_parse(p_uuid.utf8().get_data(), uuid) != 0) {
+		return anchor_store->reject("Invalid world anchor UUID.");
+	}
+	char text[37];
+	uuid_unparse_lower(uuid, text);
+	const auto store = anchor_store;
+	const uint64_t generation = store->get_status().generation;
+	const uint64_t request = store->begin("remove", text);
+	if (request) {
+		visionos_tracking_access().perform([&] {
+			ar_world_tracking_provider_remove_anchor_with_identifier(world_tracking_provider, uuid, ^(ar_world_anchor_t p_removed, bool successful, ar_error_t error) {
+				store->complete(generation, request, successful && error == nullptr, error ? ar_error_get_error_code(error) : FAILED, world_anchor_error(error, successful));
+			});
 		});
 	}
-
-	created_anchor_uuids.erase(uuid_str);
-
-	// The removal confirmation will come via the update handler.
+	return request;
 }
 
 bool VisionOSSceneUnderstanding::is_anchor_sharing_available() const {
-	return anchor_sharing_available.is_set();
+	return anchor_store->get_status().running && anchor_sharing_available->is_set();
+}
+
+bool VisionOSSceneUnderstanding::is_world_anchor_supported() const {
+#if TARGET_OS_SIMULATOR
+	return false;
+#else
+	return ar_world_tracking_provider_is_supported();
+#endif
+}
+
+bool VisionOSSceneUnderstanding::activate_world_anchors() {
+	if (uninitializing || !is_world_anchor_supported() || world_tracking_provider == nullptr) {
+		return false;
+	}
+	if (!world_anchors_enabled) {
+		world_anchors_enabled = true;
+		setup_anchor_lifecycle();
+		process_anchor_updates();
+	}
+	return anchor_store->get_status().running;
+}
+
+uint64_t VisionOSSceneUnderstanding::request_anchor_enumeration() {
+	const bool was_enabled = world_anchors_enabled;
+	enumeration_for_caller = true;
+	const bool activated = activate_world_anchors();
+	enumeration_for_caller = false;
+	if (!activated) {
+		return anchor_store->reject("World tracking is unavailable; wait for the native provider to run.");
+	}
+	if (!was_enabled) {
+		return initial_enumeration_request;
+	}
+	return submit_anchor_enumeration(false);
+}
+
+uint64_t VisionOSSceneUnderstanding::submit_anchor_enumeration(bool p_internal) {
+	if (!is_world_anchor_supported() || !anchor_store->get_status().running) {
+		return anchor_store->reject("World tracking is unavailable.");
+	}
+	const auto store = anchor_store;
+	const uint64_t generation = store->get_status().generation;
+	const uint64_t request = store->begin("enumerate", "", Transform3D(), false, p_internal);
+	if (request) {
+		visionos_tracking_access().perform([&] {
+			ar_world_tracking_provider_copy_all_world_anchors(world_tracking_provider, ^(ar_world_anchors_t anchors) {
+				const double observed_at = CACurrentMediaTime();
+				__block std::vector<VisionOSWorldAnchorStore::Anchor> records;
+				if (anchors != nullptr) {
+					ar_world_anchors_enumerate_anchors(anchors, ^bool(ar_world_anchor_t anchor) {
+						records.push_back(world_anchor_record(anchor));
+						return records.size() <= VisionOSWorldAnchorStore::MAX_ANCHORS;
+					});
+				}
+				store->enumerated(generation, request, records, anchors != nullptr, observed_at);
+			});
+		});
+	}
+	return request;
 }
 
 #endif // VISIONOS_ENABLED

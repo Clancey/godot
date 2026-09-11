@@ -63,6 +63,10 @@ public:
 	}
 };
 
+#ifdef VISIONOS_ENABLED
+VisionOSTrackingAccess &visionos_tracking_access();
+#endif
+
 template <typename Geometry>
 bool visionos_apply_head_pose(const std::shared_ptr<const Geometry> &p_geometry, const Ref<XRPositionalTracker> &p_tracker, double &r_presentation_time, double &r_trackable_time) {
 	r_presentation_time = p_geometry ? p_geometry->presentation_time : 0;

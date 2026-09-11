@@ -72,6 +72,7 @@ void uninitialize_visionos_xr_module(ModuleInitializationLevel p_level) {
 	}
 
 	if (visionos_xr.is_valid()) {
+		visionos_anchor_capability->set_scene_understanding(nullptr);
 		// uninitialize our interface if it is initialized
 		if (visionos_xr->is_initialized()) {
 			visionos_xr->uninitialize();

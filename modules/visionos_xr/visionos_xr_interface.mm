@@ -35,6 +35,7 @@
 #include "visionos_presentation.h"
 #include "visionos_render_diagnostics.h"
 #include "visionos_simd_helpers.h"
+#include "visionos_spatial_anchor_capability.h"
 #include "visionos_tracking.h"
 
 #include "core/config/project_settings.h"
@@ -88,6 +89,10 @@ void VisionOSXRInterface::emit_signal_enum(SignalEnum p_signal) {
 	emit_signal(get_signal_name(p_signal));
 }
 
+VisionOSSpatialAnchorCapability *VisionOSXRInterface::get_spatial_anchor_capability() const {
+	return VisionOSSpatialAnchorCapability::get_singleton();
+}
+
 Ref<VisionOSAnchorTracker> VisionOSXRInterface::create_spatial_anchor(const Transform3D &p_transform, bool p_shared) {
 	return scene_understanding.create_anchor(p_transform, p_shared);
 }
@@ -101,6 +106,7 @@ bool VisionOSXRInterface::is_anchor_sharing_available() const {
 }
 
 void VisionOSXRInterface::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("get_spatial_anchor_capability"), &VisionOSXRInterface::get_spatial_anchor_capability);
 	// Signals
 	for (int i = 0; i < VISIONOS_XR_SIGNAL_MAX; i++) {
 		ADD_SIGNAL(MethodInfo(get_signal_name((SignalEnum)i)));
@@ -211,9 +217,7 @@ bool VisionOSXRInterface::initialize() {
 	}
 
 	// Scene understanding
-	if (scene_understanding.enabled()) {
-		scene_understanding.initialize(ar_session, cs.world_tracking_provider);
-	}
+	scene_understanding.initialize(ar_session, cs.world_tracking_provider);
 
 	// Running the ARKit session for head tracking, at first
 	run_ar_session();
@@ -268,9 +272,7 @@ void VisionOSXRInterface::uninitialize() {
 
 	XRServer *xr_server = XRServer::get_singleton();
 	if (xr_server != nullptr) {
-		if (scene_understanding.enabled()) {
-			scene_understanding.uninitialize();
-		}
+		scene_understanding.uninitialize();
 
 		if (controllers.enabled) {
 			controllers.uninitialize(xr_server);
@@ -568,7 +570,7 @@ void VisionOSXRInterface::update_authorizations_async() {
 		types |= ar_authorization_type_accessory_tracking;
 	}
 
-	if (scene_understanding.enabled()) {
+	if (scene_understanding.requires_world_sensing()) {
 		types |= ar_authorization_type_world_sensing;
 	}
 
@@ -690,6 +692,12 @@ void VisionOSXRInterface::process() {
 	if (!initialized) {
 		return;
 	}
+	if (scene_understanding.enabled()) {
+		scene_understanding.process();
+	}
+	if (!initialized) {
+		return;
+	}
 
 	if (cs.enabled) {
 		auto presentation = visionos_get_presentation();
@@ -735,10 +743,6 @@ void VisionOSXRInterface::process() {
 		if (controllers.active()) {
 			controllers.update_controller_trackers_from_arkit(trackable_anchor_time);
 		}
-	}
-
-	if (scene_understanding.active()) {
-		scene_understanding.process();
 	}
 }
 
