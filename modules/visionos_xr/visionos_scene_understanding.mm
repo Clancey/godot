@@ -127,7 +127,7 @@ void VisionOSSceneUnderstanding::uninitialize() {
 		for (const KeyValue<uint64_t, Ref<VisionOSMeshTracker>> &kv : mesh_trackers) {
 			xr_server->remove_tracker(kv.value);
 		}
-		const auto old_anchor_trackers = anchor_trackers;
+		const HashMap<String, Ref<VisionOSAnchorTracker>> old_anchor_trackers(anchor_trackers);
 		anchor_trackers.clear();
 		for (const KeyValue<String, Ref<VisionOSAnchorTracker>> &kv : old_anchor_trackers) {
 			kv.value->invalidate_pose(SNAME("default"));
@@ -812,13 +812,16 @@ void VisionOSSceneUnderstanding::process_anchor_updates() {
 		return;
 	}
 	const uint64_t lifecycle = lifecycle_revision;
-	const bool running = is_world_anchor_supported() && world_tracking_provider != nullptr &&
-			visionos_tracking_access().perform([&] { return ar_data_provider_get_state(world_tracking_provider) == ar_data_provider_state_running; });
-	const uint64_t provider_revision = anchor_store->get_status().provider_revision;
+	const auto provider_state = anchor_store->sample_provider_state([&] {
+		return is_world_anchor_supported() && world_tracking_provider != nullptr &&
+				visionos_tracking_access().perform([&] { return ar_data_provider_get_state(world_tracking_provider) == ar_data_provider_state_running; });
+	});
+	const bool running = provider_state.running;
+	const uint64_t provider_revision = provider_state.revision;
 	if (running != anchor_provider_running || provider_revision != anchor_provider_revision) {
 		anchor_provider_revision = provider_revision;
 		teardown_world_anchors();
-		const auto old_anchor_trackers = anchor_trackers;
+		const HashMap<String, Ref<VisionOSAnchorTracker>> old_anchor_trackers(anchor_trackers);
 		anchor_trackers.clear();
 		for (const KeyValue<String, Ref<VisionOSAnchorTracker>> &entry : old_anchor_trackers) {
 			entry.value->invalidate_pose(SNAME("default"));

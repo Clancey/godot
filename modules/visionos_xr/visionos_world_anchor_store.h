@@ -86,6 +86,11 @@ public:
 		std::string message;
 	};
 
+	struct ProviderState {
+		uint64_t revision;
+		bool running;
+	};
+
 private:
 	mutable std::mutex mutex;
 	Status status;
@@ -157,6 +162,12 @@ private:
 	}
 
 public:
+	template <typename Query>
+	ProviderState sample_provider_state(Query p_query) const {
+		const uint64_t revision = get_status().provider_revision;
+		return { revision, p_query() };
+	}
+
 	uint64_t watch_provider() {
 		std::lock_guard<std::mutex> lock(mutex);
 		return ++provider_observer;
