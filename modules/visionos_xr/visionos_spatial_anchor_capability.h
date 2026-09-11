@@ -35,6 +35,7 @@
 #include "visionos_anchor_tracker.h"
 
 #include "core/object/ref_counted.h"
+#include "core/variant/typed_array.h"
 
 class VisionOSSceneUnderstanding;
 
@@ -48,6 +49,17 @@ public:
 	~VisionOSSpatialAnchorCapability();
 
 	void set_scene_understanding(VisionOSSceneUnderstanding *p_scene_understanding);
+	Dictionary get_world_anchor_status() const;
+	int64_t request_create_anchor(const Transform3D &p_transform);
+	int64_t request_remove_anchor(const String &p_uuid);
+	int64_t request_anchor_enumeration();
+	bool cancel_request(int64_t p_request);
+	Dictionary get_anchor(const String &p_uuid) const;
+	TypedArray<Dictionary> get_anchors() const;
+	TypedArray<Dictionary> take_completed_requests();
+	String get_last_error() const;
+	void process();
+	void track_legacy_request(uint64_t p_request, const Ref<VisionOSAnchorTracker> &p_tracker, const Callable &p_callback = Callable());
 
 	// Mirrors OpenXRSpatialAnchorCapability API
 	bool is_spatial_anchor_supported();
@@ -56,8 +68,7 @@ public:
 	Ref<VisionOSAnchorTracker> create_new_anchor(const Transform3D &p_transform);
 	void remove_anchor(Ref<VisionOSAnchorTracker> p_anchor_tracker);
 
-	// Persistence - visionOS world anchors are automatically persistent,
-	// so persist is a no-op that fires the callback, and unpersist removes the anchor.
+	// Legacy callbacks run on the engine thread only after actual operation success.
 	void persist_anchor(Ref<VisionOSAnchorTracker> p_anchor_tracker, const Callable &p_user_callback = Callable());
 	void unpersist_anchor(Ref<VisionOSAnchorTracker> p_anchor_tracker, const Callable &p_user_callback = Callable());
 
@@ -71,6 +82,14 @@ protected:
 private:
 	static VisionOSSpatialAnchorCapability *singleton;
 	VisionOSSceneUnderstanding *scene_understanding = nullptr;
+	struct LegacyRequest {
+		uint64_t id = 0;
+		uint64_t generation = 0;
+		Ref<VisionOSAnchorTracker> tracker;
+		Callable callback;
+	};
+	Vector<LegacyRequest> legacy_requests;
+	void deliver_legacy_result(uint64_t p_generation, const Ref<VisionOSAnchorTracker> &p_tracker, const Callable &p_callback, const String &p_operation, int p_error, const String &p_message);
 };
 
 #endif // VISIONOS_ENABLED

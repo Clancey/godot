@@ -36,6 +36,7 @@
 #include "visionos_definitions.h"
 #include "visionos_mesh_tracker.h"
 #include "visionos_plane_tracker.h"
+#include "visionos_world_anchor_store.h"
 
 #include "core/os/mutex.h"
 #include "core/templates/hash_map.h"
@@ -44,6 +45,8 @@
 #include "core/templates/safe_refcount.h"
 
 #include <uuid/uuid.h>
+
+#include <memory>
 
 class VisionOSSceneUnderstanding {
 public:
@@ -55,16 +58,21 @@ public:
 	void add_providers_to(ar_data_providers_t p_data_providers);
 	void process();
 
-	// Scene understanding is gated behind the world sensing authorization, mirroring
-	// how hand and controller tracking are gated by their own authorizations.
+	// Local world anchors do not require world-sensing authorization.
 	VisionOSAuthorizationStatus authorization = VisionOSAuthorizationStatus::NOT_DETERMINED;
 
 	bool enabled() const { return plane_detection_enabled || scene_reconstruction_enabled || world_anchors_enabled; }
 	bool active() const { return enabled() && authorization == VisionOSAuthorizationStatus::ALLOWED; }
+	bool requires_world_sensing() const { return plane_detection_enabled || scene_reconstruction_enabled; }
 
 	bool is_plane_detection_enabled() const { return plane_detection_enabled; }
 	bool is_scene_reconstruction_enabled() const { return scene_reconstruction_enabled; }
 	bool is_world_anchors_enabled() const { return world_anchors_enabled; }
+	bool is_world_anchor_supported() const;
+	std::shared_ptr<VisionOSWorldAnchorStore> get_anchor_store() const { return anchor_store; }
+	uint64_t request_create_anchor(const Transform3D &p_transform, bool p_shared = false);
+	uint64_t request_remove_anchor(const String &p_uuid);
+	uint64_t request_anchor_enumeration();
 
 	// World anchor public API
 	Ref<VisionOSAnchorTracker> create_anchor(const Transform3D &p_transform, bool p_shared_with_nearby_participants = false);
@@ -76,6 +84,8 @@ private:
 	bool plane_detection_enabled = false;
 	bool scene_reconstruction_enabled = false;
 	bool world_anchors_enabled = false;
+	uint64_t lifecycle_revision = 0;
+	bool uninitializing = false;
 
 	// ARKit providers
 	ar_session_t ar_session = nullptr;
@@ -134,25 +144,19 @@ private:
 	void process_mesh_updates();
 
 	// ---- World anchors ----
-	struct AnchorUpdate {
-		enum Type { ADDED,
-			UPDATED,
-			REMOVED };
-		Type type;
-		uint64_t anchor_id_hash;
-		String anchor_uuid_str;
-		Transform3D transform;
-		bool is_tracked;
-		bool is_shared;
-	};
-
-	Mutex anchor_mutex;
-	LocalVector<AnchorUpdate> pending_anchor_updates;
-	SafeFlag anchor_sharing_available;
-	HashMap<uint64_t, Ref<VisionOSAnchorTracker>> anchor_trackers;
-
-	// UUIDs of anchors we've created (for tracking which are ours).
-	HashSet<String> created_anchor_uuids;
+	std::shared_ptr<VisionOSWorldAnchorStore> anchor_store = std::make_shared<VisionOSWorldAnchorStore>();
+	std::shared_ptr<SafeFlag> anchor_sharing_available = std::make_shared<SafeFlag>();
+	HashMap<String, Ref<VisionOSAnchorTracker>> anchor_trackers;
+	bool anchor_provider_running = false;
+	bool anchor_handlers_installed = false;
+	std::string last_created_uuid;
+	uint64_t initial_enumeration_request = 0;
+	bool enumeration_for_caller = false;
+	bool anchor_lifecycle_installed = false;
+	uint64_t anchor_provider_revision = 0;
+	void setup_anchor_lifecycle();
+	uint64_t submit_anchor_enumeration(bool p_internal);
+	bool activate_world_anchors();
 
 	void setup_world_anchors();
 	void teardown_world_anchors();

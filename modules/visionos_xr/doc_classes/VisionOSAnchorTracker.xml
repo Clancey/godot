@@ -4,8 +4,9 @@
 		A tracker for a visionOS world anchor.
 	</brief_description>
 	<description>
-		Represents an ARKit world anchor: a position in the user's surroundings that the system persists across sessions and re-locates automatically.
+		Represents an ARKit world anchor. Ordinary local anchors successfully added to the provider persist across sessions; shared anchors do not. Persistence does not imply a currently usable tracked pose.
 		Create these through [method VisionOSXRInterface.create_spatial_anchor] or [method VisionOSSpatialAnchorCapability.create_new_anchor]. An anchor may temporarily stop being tracked when the user moves away from it; watch [signal tracking_state_changed] to react.
+		The [code]default[/code] pose is raw [code]origin_from_anchor[/code] in meters; [method XRPose.get_adjusted_transform] applies world scale and reference frame. An initially returned tracker has no valid pose until tracked provider data arrives. Use the capability's request completion and current-generation cache to distinguish successful addition, localization, and confirmed removal.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -17,7 +18,7 @@
 			The UUID ARKit assigned to this anchor. Store it to identify the anchor again in a later session.
 		</member>
 		<member name="shared_with_nearby_participants" type="bool" setter="" getter="get_shared_with_nearby_participants" default="false">
-			If [code]true[/code], this anchor is shared with nearby SharePlay participants.
+			If [code]true[/code], this anchor is shared with nearby SharePlay participants and is not persistent across sessions.
 		</member>
 	</members>
 	<signals>

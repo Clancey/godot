@@ -297,8 +297,7 @@ String EditorExportPlatformVisionOS::_process_config_file_line(const Ref<EditorE
 		// Info.plist NSWorldSensingUsageDescription
 	} else if (p_line.contains("$world_sensing_usage_description")) {
 		bool scene_understanding_enabled = GLOBAL_GET("xr/visionos/scene_understanding/enable_plane_detection") ||
-				GLOBAL_GET("xr/visionos/scene_understanding/enable_scene_reconstruction") ||
-				GLOBAL_GET("xr/visionos/scene_understanding/enable_world_anchors");
+				GLOBAL_GET("xr/visionos/scene_understanding/enable_scene_reconstruction");
 		if (scene_understanding_enabled) {
 			String description = p_preset->get("privacy/world_sensing_usage_description");
 			String value = "<key>NSWorldSensingUsageDescription</key>\n";

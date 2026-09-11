@@ -4,25 +4,89 @@
 		Singleton for creating and persisting visionOS world anchors.
 	</brief_description>
 	<description>
-		Mirrors the [OpenXRSpatialAnchorCapability] API so anchor code can be shared between OpenXR runtimes and visionOS.
-		visionOS world anchors are persisted by the system automatically, so [method persist_anchor] simply reports success and [method unpersist_anchor] removes the anchor.
-		Requires the [code]xr/visionos/scene_understanding/enable_world_anchors[/code] project setting.
+		Provides local world anchors using the native interface's existing ARKit world tracking provider. Ordinary anchors successfully added to ARKit persist across application runs and device restarts until removed. This is not a guarantee of immediate tracking, future localization accuracy, or portability to another installation or device. Shared anchors are not persistent.
+		Use [method request_create_anchor], [method request_remove_anchor], and [method request_anchor_enumeration] with a single consumer of [method take_completed_requests]. Poll on the engine thread; never block rendering while waiting for an operation or tracked pose. A positive request ID means accepted, not successful. Zero means rejected; read [method get_last_error]. IDs increase during this capability's lifetime. At most 64 outstanding or unconsumed requests are retained independently of coalesced pose updates. Outcomes are not evicted: drain them or explicitly cancel requests to free capacity.
+		[method get_anchors] stores at most 256 UUIDs, including unavailable entries and removal tombstones. This is a bridge capacity, not an ARKit limit. Overflow fails closed with an explicit status error and invalidates tracking; restart native tracking before proceeding. No unknown anchors are automatically removed.
+		The [code]xr/visionos/scene_understanding/enable_world_anchors[/code] project setting enables automatic observation and initial enumeration when world tracking starts. Alternatively, the first request enables observation lazily once the native interface is initialized. Local anchors do not require world-sensing authorization or scanning providers. Unsupported platforms and simulators report unsupported; provider-not-running and failed enumeration are not successful empty results.
+		All input and returned anchor transforms are raw ARKit [code]origin_from_anchor[/code] rigid transforms in meters. They map anchor-local points into the current tracking origin, not scene-world coordinates. To match [method XRPose.get_adjusted_transform], scale only the raw translation by [member XRServer.world_scale], then left-multiply [method XRServer.get_reference_frame]. For scene-world placement, left-multiply the corresponding [XROrigin3D]'s global transform once. Store the room relation as [code]anchor_from_room = world_from_anchor.affine_inverse() * world_from_room[/code]; restore with [code]world_from_room = current_world_from_anchor * anchor_from_room[/code]. Never recreate an anchor from an old origin-relative pose and call it restored.
+		A tracked pose and successful persistence are separate conditions. Retain the previously saved room binding until creation completes successfully and its current-generation local anchor is both persisted and tracked. A provider removal update, missing UUID, or untracked pose is not confirmation of permanent deletion. Only a successful explicit removal marks [code]removed[/code].
 	</description>
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="cancel_request">
+			<return type="bool" />
+			<param index="0" name="request_id" type="int" />
+			<description>
+				Suppresses delivery of this request's completion. Returns [code]false[/code] for an unknown or already consumed request. Cancellation does not undo native operations, delete an anchor, or release an in-flight request slot before its native completion. A cancelled creation can still succeed; its UUID and state remain in the cache. No automatic cleanup or retry is performed.
+			</description>
+		</method>
+		<method name="get_anchor" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="uuid" type="String" />
+			<description>
+				Returns the cached record described by [method get_anchors], or an empty dictionary when the UUID is unknown in this generation. Unknown does not mean deleted. Compare [code]generation[/code] with [method get_world_anchor_status] and require [code]tracked[/code] before using its pose.
+			</description>
+		</method>
+		<method name="get_anchors" qualifiers="const">
+			<return type="Dictionary[]" />
+			<description>
+				Returns copied records containing [code]uuid[/code] ([String]), [code]transform[/code] ([Transform3D], raw tracking-origin meters), [code]tracked[/code], [code]persisted[/code], [code]removed[/code], [code]present[/code], [code]shared[/code] ([bool]), and [code]generation[/code], [code]revision[/code] ([int]).
+				[code]persisted[/code] is true only after successful local addition or discovery of an existing ordinary provider anchor. Shared anchors and pending placeholders are never persisted. [code]present[/code] describes current provider observation. [code]removed[/code] is set only by successful explicit removal, not loss of tracking. Revisions increase as records change. Poses can change after localization or recentering; an untracked transform must not be used to align content.
+			</description>
+		</method>
+		<method name="get_last_error" qualifiers="const">
+			<return type="String" />
+			<description>
+				Returns the reason for the last immediate request rejection. Read this when a request method returns zero. Native asynchronous failures instead appear in completed request records.
+			</description>
+		</method>
+		<method name="get_world_anchor_status" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Returns [code]supported[/code], [code]enabled[/code], [code]running[/code] ([bool]), [code]generation[/code] ([int]), [code]enumeration_state[/code] ([String]: [code]idle[/code], [code]pending[/code], [code]complete[/code], or [code]failed[/code]), [code]error[/code] ([int]) and [code]error_message[/code] ([String]). Support describes device capability, not current readiness. Enabling observation never creates another provider or session.
+				Provider stop/pause invalidates tracked records and completes pending requests with an unavailable error. On start/resume the generation increases and the cache is repopulated from provider updates and initial enumeration. Late callbacks from older generations are ignored. Previously completed outcomes retain their original generation until consumed; do not interpret those as current tracking.
+			</description>
+		</method>
+		<method name="request_anchor_enumeration">
+			<return type="int" />
+			<description>
+				Requests all currently known anchors asynchronously. Restored anchors are matched by UUID, never recreated. The first request may enable observation and return the initial enumeration request ID. Automatic enumerations not explicitly requested by a caller update status and cache without retaining a public completion. A null native result reports failure, not an empty store. Even successful enumeration without a UUID does not prove permanent loss; keep listening for subsequent updates if localization is still pending.
+			</description>
+		</method>
+		<method name="request_create_anchor">
+			<return type="int" />
+			<param index="0" name="transform" type="Transform3D" />
+			<description>
+				Requests an ordinary persistent local anchor at a finite rigid transform in raw tracking-origin meters. Returns a positive request ID or zero on rejection. The terminal completion includes its UUID. Success means ARKit accepted the addition, not that a usable tracked pose is available or that the anchor was synchronously flushed to storage.
+			</description>
+		</method>
+		<method name="request_remove_anchor">
+			<return type="int" />
+			<param index="0" name="uuid" type="String" />
+			<description>
+				Requests explicit removal of a valid UUID, including an anchor that is not currently tracked. Failure preserves its binding and does not mark it removed. Applications must wait for a successful completion before forgetting their saved UUID.
+			</description>
+		</method>
+		<method name="take_completed_requests">
+			<return type="Dictionary[]" />
+			<description>
+				Returns and consumes terminal request records: [code]request_id[/code] ([int]), [code]operation[/code] ([String]: [code]create[/code], [code]remove[/code], [code]enumerate[/code]), [code]uuid[/code] ([String], empty for enumeration), [code]success[/code] ([bool]), [code]error[/code] ([int]), [code]error_message[/code] ([String]), and [code]generation[/code] ([int]).
+				Successful records have error zero. Failures include native ARKit error codes when available, otherwise a nonzero Godot [enum Error] and explanatory message. Do not infer success from an error namespace or tracking update alone. Only one consumer should drain these records; reads and dispatch belong on the engine thread. Legacy callback operations are consumed separately.
+			</description>
+		</method>
 		<method name="create_new_anchor">
 			<return type="VisionOSAnchorTracker" />
 			<param index="0" name="transform" type="Transform3D" />
 			<description>
-				Creates a world anchor at [param transform] and returns a tracker for it, or [code]null[/code] on failure.
+				Legacy wrapper that requests creation at a raw tracking-origin transform in meters and returns an initially untracked tracker, or [code]null[/code] on immediate rejection. Its returned tracker is not a persistence receipt. Use [method persist_anchor] or the request API for success/failure.
 			</description>
 		</method>
 		<method name="create_shared_anchor">
 			<return type="VisionOSAnchorTracker" />
 			<param index="0" name="transform" type="Transform3D" />
 			<description>
-				Creates a world anchor at [param transform] that is also shared with nearby SharePlay participants. Check [method is_sharing_available] first.
+				Creates a session-only anchor at raw tracking-origin [param transform] shared with nearby SharePlay participants. Returns [code]null[/code] when sharing is unavailable; it never silently substitutes a local anchor. Shared anchors cannot be persisted.
 			</description>
 		</method>
 		<method name="is_sharing_available">
@@ -34,13 +98,13 @@
 		<method name="is_spatial_anchor_supported">
 			<return type="bool" />
 			<description>
-				Returns [code]true[/code] if world anchors are available.
+				Returns whether the native device supports world tracking anchors. Check [method get_world_anchor_status] separately for enabled and running state. Simulators return [code]false[/code].
 			</description>
 		</method>
 		<method name="is_spatial_persistence_supported">
 			<return type="bool" />
 			<description>
-				Returns [code]true[/code] if anchors persist across sessions. This matches [method is_spatial_anchor_supported] on visionOS, because the system always persists world anchors.
+				Returns whether ordinary local world-anchor persistence is supported. This does not apply to shared anchors or establish that an individual creation succeeded.
 			</description>
 		</method>
 		<method name="persist_anchor">
@@ -48,14 +112,14 @@
 			<param index="0" name="anchor_tracker" type="VisionOSAnchorTracker" />
 			<param index="1" name="user_callback" type="Callable" default="Callable()" />
 			<description>
-				Provided for parity with OpenXR. visionOS already persists world anchors, so this immediately invokes [param user_callback] with [param anchor_tracker] instead of doing any work.
+				Waits for successful local addition, then invokes [param user_callback] with [param anchor_tracker] on the engine thread. There is no separate native save operation. Failure emits [signal operation_failed] and never calls the success callback. This does not wait for tracking; the application must check that separately.
 			</description>
 		</method>
 		<method name="remove_anchor">
 			<return type="void" />
 			<param index="0" name="anchor_tracker" type="VisionOSAnchorTracker" />
 			<description>
-				Removes [param anchor_tracker] and forgets its stored position.
+				Legacy asynchronous removal wrapper. Native failure emits [signal operation_failed] and does not forget the anchor.
 			</description>
 		</method>
 		<method name="unpersist_anchor">
@@ -63,8 +127,19 @@
 			<param index="0" name="anchor_tracker" type="VisionOSAnchorTracker" />
 			<param index="1" name="user_callback" type="Callable" default="Callable()" />
 			<description>
-				Removes the anchor so it is no longer restored in later sessions, then invokes [param user_callback] with [param anchor_tracker].
+				Requests removal, then invokes [param user_callback] with [param anchor_tracker] only after actual native success. Failure emits [signal operation_failed].
 			</description>
 		</method>
 	</methods>
+	<signals>
+		<signal name="operation_failed">
+			<param index="0" name="operation" type="String" />
+			<param index="1" name="uuid" type="String" />
+			<param index="2" name="error" type="int" />
+			<param index="3" name="message" type="String" />
+			<description>
+				Reports a failed legacy callback operation on the engine thread. Request-based operations instead report their terminal outcome through [method take_completed_requests].
+			</description>
+		</signal>
+	</signals>
 </class>

@@ -261,6 +261,10 @@ id<MTLTexture> make_target(id<MTLDevice> p_device, NSUInteger p_width, NSUIntege
 
 } // namespace
 
+VisionOSTrackingAccess &visionos_tracking_access() {
+	return tracking_session().access;
+}
+
 void visionos_run_tracking_session(ar_data_providers_t p_providers) {
 	auto &tracking = tracking_session();
 	tracking.access.perform([&] {
