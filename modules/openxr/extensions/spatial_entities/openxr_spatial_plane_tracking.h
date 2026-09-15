@@ -269,6 +269,10 @@ private:
 	int built_in_retries_left = 0;
 	int built_in_retry_cooldown = BUILT_IN_RETRY_COOLDOWN;
 
+	// Frames to wait between plane discovery queries. Discovery is also what keeps
+	// known planes up to date here, so we keep this interval short.
+	static const int PLANE_DISCOVERY_COOLDOWN = 60;
+
 	bool need_discovery = false;
 	int discovery_cooldown = 0;
 	Ref<OpenXRFutureResult> discovery_query_result;

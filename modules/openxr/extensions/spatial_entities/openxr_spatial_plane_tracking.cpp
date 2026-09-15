@@ -703,10 +703,23 @@ void OpenXRSpatialPlaneTrackingCapability::on_process() {
 		discovery_cooldown--;
 	}
 
+	// The runtime is only required to send a discovery recommended event as a
+	// hint, and some runtimes only ever send it once while the spatial context is
+	// set up. Relying on that event alone means planes that are detected later,
+	// for instance when the user walks into another part of the room, are never
+	// discovered.
+	//
+	// Unlike marker tracking there is no separate update query here, discovery is
+	// what keeps existing planes up to date as well, so we re-arm it whenever the
+	// cooldown expires.
+	if (!need_discovery && discovery_cooldown == 0 && !discovery_query_result.is_valid()) {
+		need_discovery = true;
+	}
+
 	// Check if we need to start our discovery.
 	if (need_discovery && discovery_cooldown == 0 && !discovery_query_result.is_valid()) {
 		need_discovery = false;
-		discovery_cooldown = 60; // Set our cooldown to 60 frames, it doesn't need to be an exact science.
+		discovery_cooldown = PLANE_DISCOVERY_COOLDOWN;
 
 		if (plane_component_data.is_empty()) {
 			if (plane_configuration.is_null()) {
