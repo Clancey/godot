@@ -276,6 +276,13 @@ private:
 	Ref<OpenXRFutureResult> built_in_future;
 	RID spatial_context;
 
+	// Retry logic for our built-in tracking, used when we're (not yet) allowed to track markers.
+	static const int BUILT_IN_MAX_RETRIES = 30;
+	static const int BUILT_IN_RETRY_COOLDOWN = 120; // In frames, doesn't need to be an exact science.
+	BitField<MarkerTypeFlags> built_in_marker_types;
+	int built_in_retries_left = 0;
+	int built_in_retry_cooldown = BUILT_IN_RETRY_COOLDOWN;
+
 	bool need_discovery = false;
 	int discovery_cooldown = 0;
 	Ref<OpenXRFutureResult> discovery_query_result;

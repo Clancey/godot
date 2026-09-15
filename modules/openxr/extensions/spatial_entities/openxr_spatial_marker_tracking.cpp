@@ -511,6 +511,10 @@ void OpenXRSpatialMarkerTrackingCapability::on_session_created(const XrSession p
 	if (marker_types != 0) {
 		// Start our builtin tracking system.
 		start_built_in_tracking(marker_types);
+
+		// The permissions required for marker tracking are often granted while our session is
+		// already running, allow our built-in tracking to retry until they are.
+		built_in_retries_left = BUILT_IN_MAX_RETRIES;
 	}
 }
 
@@ -536,6 +540,21 @@ void OpenXRSpatialMarkerTrackingCapability::on_session_destroyed() {
 
 void OpenXRSpatialMarkerTrackingCapability::on_process() {
 	if (!spatial_context.is_valid()) {
+		// Our built-in tracking may have failed to start because the user hadn't
+		// granted the required permissions yet (these are often requested while our
+		// session is already running). Retry so tracking starts as soon as we're allowed.
+		if (builtin_tracking_state == OpenXRSpatialEntityExtension::TrackingState::TRACKING_NO_PERMISSION && built_in_retries_left > 0) {
+			if (built_in_retry_cooldown > 0) {
+				built_in_retry_cooldown--;
+			} else {
+				built_in_retry_cooldown = BUILT_IN_RETRY_COOLDOWN;
+				built_in_retries_left--;
+
+				builtin_tracking_state = OpenXRSpatialEntityExtension::TrackingState::TRACKING_NOT_ACTIVE;
+				start_built_in_tracking(built_in_marker_types);
+			}
+		}
+
 		return;
 	}
 
@@ -665,12 +684,15 @@ bool OpenXRSpatialMarkerTrackingCapability::is_april_tag_supported() {
 bool OpenXRSpatialMarkerTrackingCapability::start_built_in_tracking(BitField<MarkerTypeFlags> p_marker_types) {
 	ERR_FAIL_COND_V(builtin_tracking_state > 0, false);
 
+	built_in_marker_types = p_marker_types;
 	builtin_tracking_state = OpenXRSpatialEntityExtension::TrackingState::TRACKING_SETTING_UP;
-
 	// Start by creating our spatial context
 	built_in_future = _create_spatial_context(p_marker_types);
 	if (built_in_future.is_null()) {
-		builtin_tracking_state = OpenXRSpatialEntityExtension::TrackingState::TRACKING_SETUP_FAILED;
+		// Our failure callback may already have set a more specific state (e.g. missing permissions).
+		if (builtin_tracking_state == OpenXRSpatialEntityExtension::TrackingState::TRACKING_SETTING_UP) {
+			builtin_tracking_state = OpenXRSpatialEntityExtension::TrackingState::TRACKING_SETUP_FAILED;
+		}
 		return false;
 	}
 
@@ -680,6 +702,9 @@ bool OpenXRSpatialMarkerTrackingCapability::start_built_in_tracking(BitField<Mar
 void OpenXRSpatialMarkerTrackingCapability::stop_built_in_tracking(bool p_clear_trackers) {
 	// Reset our tracking state
 	builtin_tracking_state = OpenXRSpatialEntityExtension::TrackingState::TRACKING_NOT_ACTIVE;
+
+	// Don't retry our built-in tracking, we've been explicitly stopped.
+	built_in_retries_left = 0;
 
 	// Cancel any discovery query
 	if (discovery_query_result.is_valid()) {

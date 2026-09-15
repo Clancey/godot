@@ -13,6 +13,7 @@
 			<return type="int" enum="OpenXRSpatialEntityExtension.TrackingState" />
 			<description>
 				Returns the state of the built-in tracking system.
+				[b]Note:[/b] If this returns [constant OpenXRSpatialEntityExtension.TRACKING_NO_PERMISSION], the user has not (yet) granted the permissions required for plane tracking. When built-in plane detection was started automatically through [member ProjectSettings.xr/openxr/extensions/spatial_entity/enable_builtin_plane_detection], the engine retries for a short period, so tracking starts as soon as the permissions are granted.
 			</description>
 		</method>
 		<method name="is_supported">

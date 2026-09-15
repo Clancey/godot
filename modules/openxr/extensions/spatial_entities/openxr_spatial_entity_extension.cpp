@@ -413,6 +413,13 @@ Ref<OpenXRFutureResult> OpenXRSpatialEntityExtension::create_spatial_context(con
 	XrFutureEXT future = XR_NULL_HANDLE;
 	XrResult xr_result = xrCreateSpatialContextAsyncEXT(openxr_api->get_session(), &create_info, &future);
 	if (XR_FAILED(xr_result)) {
+		// Report the reason for the failure so our caller can act on it,
+		// this call can for instance fail with XR_ERROR_PERMISSION_INSUFFICIENT
+		// when the user hasn't granted the required permissions (yet).
+		if (p_failure_callback.is_valid()) {
+			p_failure_callback.call(int(xr_result), false);
+		}
+
 		// Not successful? then exit.
 		ERR_FAIL_V_MSG(Ref<OpenXRFutureResult>(), "OpenXR: Failed to create spatial context [" + openxr_api->get_error_string(xr_result) + "]");
 	}
