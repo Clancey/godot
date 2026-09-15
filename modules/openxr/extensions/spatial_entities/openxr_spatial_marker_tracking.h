@@ -283,6 +283,12 @@ private:
 	int built_in_retries_left = 0;
 	int built_in_retry_cooldown = BUILT_IN_RETRY_COOLDOWN;
 
+	// Frames to wait between marker discovery queries. We discover often while we
+	// have no markers so a marker entering view is picked up quickly, and back off
+	// once we do, as known markers are maintained by the update query instead.
+	static const int MARKER_DISCOVERY_COOLDOWN = 60;
+	static const int MARKER_DISCOVERY_IDLE_COOLDOWN = 300;
+
 	bool need_discovery = false;
 	int discovery_cooldown = 0;
 	Ref<OpenXRFutureResult> discovery_query_result;

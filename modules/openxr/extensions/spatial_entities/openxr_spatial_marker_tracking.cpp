@@ -589,10 +589,16 @@ void OpenXRSpatialMarkerTrackingCapability::on_process() {
 		need_discovery = true;
 	}
 
+	// Discovery is only needed to find markers we don't know about yet, known
+	// markers are kept up to date by the update query below. Re-discovering while
+	// we already track markers is therefore mostly wasted work, so back off to
+	// reduce the load we put on the runtime.
+	const int discovery_interval = marker_trackers.has(spatial_context) && !marker_trackers[spatial_context].is_empty() ? MARKER_DISCOVERY_IDLE_COOLDOWN : MARKER_DISCOVERY_COOLDOWN;
+
 	// Check if we need to start our discovery.
 	if (need_discovery && discovery_cooldown == 0 && !discovery_query_result.is_valid()) {
 		need_discovery = false;
-		discovery_cooldown = 60; // Set our cooldown to 60 frames, it doesn't need to be an exact science.
+		discovery_cooldown = discovery_interval;
 
 		if (marker_discovery_component_data.is_empty()) {
 			// We always need a query result data object, and it must be first
@@ -1030,29 +1036,54 @@ void OpenXRSpatialMarkerTrackingCapability::_process_snapshot(RID p_snapshot, RI
 					}
 
 					// Set marker data.
+					XrSpatialBufferIdEXT debug_buffer_id = XR_NULL_SPATIAL_BUFFER_ID_EXT;
 					if (marker_list.is_valid()) {
 						marker_tracker->set_marker_type(marker_list->get_marker_type(i));
 						marker_tracker->set_marker_id(marker_list->get_marker_id(i));
 
 						// If the buffer id is the same, there is no new marker data.
 						XrSpatialBufferIdEXT buffer_id = marker_list->get_marker_buffer_id(i);
+						debug_buffer_id = buffer_id;
 						if (marker_tracker->get_marker_buffer_id() != buffer_id) {
 							marker_tracker->set_marker_data_with_buffer_id(marker_list->get_marker_data(p_snapshot, i), buffer_id);
 						}
 					}
 
 					// TEMPORARY INSTRUMENTATION: report what the app will actually see
-					// while this entity is tracking.
+					// while this entity is tracking. Note that the marker payload is a
+					// Variant, it is a String for QR style markers and a PackedByteArray
+					// for others, so report it without forcing a type.
 					if (debug_state_changed) {
 						Ref<XRPose> debug_pose = marker_tracker->get_pose(SNAME("default"));
-						PackedByteArray debug_data = marker_tracker->get_marker_data();
-						print_line(vformat("OpenXR marker debug: entity=%d TRACKING pose_valid=%s confidence=%d origin=%s bounds=%s payload_bytes=%d",
+						Variant debug_data = marker_tracker->get_marker_data();
+						String debug_payload_desc;
+						switch (debug_data.get_type()) {
+							case Variant::STRING: {
+								String payload = debug_data;
+								debug_payload_desc = vformat("String(len=%d) \"%s\"", payload.length(), payload);
+							} break;
+							case Variant::PACKED_BYTE_ARRAY: {
+								PackedByteArray payload = debug_data;
+								debug_payload_desc = vformat("PackedByteArray(len=%d)", payload.size());
+							} break;
+							case Variant::NIL: {
+								debug_payload_desc = "<nil, runtime has not exposed payload yet>";
+							} break;
+							default: {
+								debug_payload_desc = vformat("<variant type %d>", int(debug_data.get_type()));
+							} break;
+						}
+
+						print_line(vformat("OpenXR marker debug: entity=%d TRACKING pose_valid=%s confidence=%d origin=%s bounds=%s marker_type=%d marker_id=%d buffer_id=%d payload=%s",
 								uint64_t(entity_id),
 								(debug_pose.is_valid() && debug_pose->get_has_tracking_data()) ? "true" : "false",
 								debug_pose.is_valid() ? int(debug_pose->get_tracking_confidence()) : -1,
 								debug_pose.is_valid() ? String(debug_pose->get_transform().origin) : String("<none>"),
 								String(marker_tracker->get_bounds_size()),
-								debug_data.size()));
+								int(marker_tracker->get_marker_type()),
+								marker_tracker->get_marker_id(),
+								uint64_t(debug_buffer_id),
+								debug_payload_desc));
 					}
 				}
 
