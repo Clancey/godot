@@ -125,6 +125,9 @@ private:
 
 	HashMap<XrFutureEXT, Ref<OpenXRFutureResult>> futures;
 
+	// TEMPORARY INSTRUMENTATION.
+	int debug_poll_heartbeat = 0;
+
 	// Make these accessible from GDExtension and/or GDScript
 	Ref<OpenXRFutureResult> _register_future(uint64_t p_future, const Callable &p_on_success = Callable());
 	void _cancel_future(uint64_t p_future);

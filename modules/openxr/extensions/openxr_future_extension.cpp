@@ -227,7 +227,23 @@ void OpenXRFutureExtension::_cancel_future(uint64_t p_future) {
 
 void OpenXRFutureExtension::on_process() {
 	if (!is_active()) {
+		// TEMPORARY INSTRUMENTATION: without XR_EXT_future no future ever completes.
+		if (!futures.is_empty()) {
+			debug_poll_heartbeat++;
+			if (debug_poll_heartbeat >= 72) {
+				debug_poll_heartbeat = 0;
+				print_line(vformat("OpenXR marker debug: future extension is NOT active, %d future(s) can never complete", int(futures.size())));
+			}
+		}
 		return;
+	}
+
+	// TEMPORARY INSTRUMENTATION: report futures that stay pending.
+	debug_poll_heartbeat++;
+	bool debug_report = false;
+	if (!futures.is_empty() && debug_poll_heartbeat >= 72) {
+		debug_poll_heartbeat = 0;
+		debug_report = true;
 	}
 
 	OpenXRAPI *openxr_api = OpenXRAPI::get_singleton();
@@ -235,6 +251,7 @@ void OpenXRFutureExtension::on_process() {
 
 	// Process futures
 	Vector<XrFutureEXT> completed;
+	Vector<Ref<OpenXRFutureResult>> completed_results;
 	for (const KeyValue<XrFutureEXT, Ref<OpenXRFutureResult>> &element : futures) {
 		XrFuturePollInfoEXT poll_info = {
 			XR_TYPE_FUTURE_POLL_INFO_EXT, // type
@@ -247,22 +264,33 @@ void OpenXRFutureExtension::on_process() {
 			XR_FUTURE_STATE_MAX_ENUM_EXT // state
 		};
 		XrResult result = xrPollFutureEXT_ptr(openxr_api->get_instance(), &poll_info, &poll_result);
+		if (debug_report) {
+			print_line(vformat("OpenXR marker debug: polling future %d -> xr_result=%d state=%d (1=PENDING, 2=READY)",
+					uint64_t(element.key), int(result), int(poll_result.state)));
+		}
 		if (XR_FAILED(result)) {
 			ERR_PRINT("OpenXR: Failed to obtain future status [" + openxr_api->get_error_string(result) + "]");
 			// Maybe remove this depending on the error?
 			continue;
 		}
 		if (poll_result.state == XR_FUTURE_STATE_READY_EXT) {
-			// Mark our future result as finished (this will invoke our callback).
-			element.value->_mark_as_finished();
-
-			// Queue removing this
+			// Queue this for completion, we must not invoke the callback while we
+			// are iterating as the callback can register new futures.
 			completed.push_back(element.key);
+			completed_results.push_back(element.value);
 		}
 	}
 
 	// Now clean up completed futures.
 	for (const XrFutureEXT &future : completed) {
 		futures.erase(future);
+	}
+
+	// And finally mark them as finished, this invokes their callbacks. We do this
+	// after we're done with our futures collection because these callbacks often
+	// start follow up work and register new futures for it, which would otherwise
+	// modify the collection we are iterating over.
+	for (const Ref<OpenXRFutureResult> &future_result : completed_results) {
+		future_result->_mark_as_finished();
 	}
 }
