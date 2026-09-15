@@ -359,6 +359,10 @@ bool OpenXRSpatialEntityExtension::on_event_polled(const XrEventDataBuffer &even
 
 			// TODO: Should maybe keep a HashMap for a reverse lookup.
 
+			// TEMPORARY INSTRUMENTATION: this event is the ONLY thing that can
+			// re-trigger entity discovery after the initial pass.
+			print_line("OpenXR marker debug: received XR_TYPE_EVENT_DATA_SPATIAL_DISCOVERY_RECOMMENDED_EXT from the runtime");
+
 			LocalVector<RID> spatial_context_rids = spatial_context_owner.get_owned_list();
 			for (const RID &rid : spatial_context_rids) {
 				if (get_spatial_context_handle(rid) == eventdata->spatialContext) {

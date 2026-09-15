@@ -579,6 +579,16 @@ void OpenXRSpatialMarkerTrackingCapability::on_process() {
 		discovery_cooldown--;
 	}
 
+	// Markers are physical objects that can enter the users view at any moment.
+	// The runtime is only required to send a discovery recommended event as a
+	// hint, and some runtimes only ever send it once when the spatial context is
+	// set up. Relying on that event alone means a marker that becomes visible
+	// later is never discovered, so we re-arm discovery ourselves. The cooldown
+	// above rate limits this to roughly one discovery per second.
+	if (!need_discovery && discovery_cooldown == 0 && !discovery_query_result.is_valid()) {
+		need_discovery = true;
+	}
+
 	// Check if we need to start our discovery.
 	if (need_discovery && discovery_cooldown == 0 && !discovery_query_result.is_valid()) {
 		need_discovery = false;
@@ -945,15 +955,21 @@ void OpenXRSpatialMarkerTrackingCapability::_process_snapshot(RID p_snapshot, RI
 			XrSpatialEntityTrackingStateEXT entity_state = query_result_data->get_entity_state(i);
 
 			// TEMPORARY INSTRUMENTATION: log entity tracking state transitions.
+			bool debug_state_changed = false;
 			{
 				debug_update_results++;
-				int *last_state = debug_last_entity_state.getptr(entity_id);
-				if (last_state == nullptr || *last_state != int(entity_state)) {
+				int *last_state_ptr = debug_last_entity_state.getptr(entity_id);
+				// Copy the previous value out before overwriting the map entry, the
+				// pointer above aliases the stored value.
+				bool had_last_state = last_state_ptr != nullptr;
+				int last_state = had_last_state ? *last_state_ptr : -100;
+				if (!had_last_state || last_state != int(entity_state)) {
+					debug_state_changed = true;
 					debug_last_entity_state[entity_id] = int(entity_state);
 					print_line(vformat("OpenXR marker debug: entity=%d state=%s (was %s) discovery=%s bounded2d=%s marker=%s",
 							uint64_t(entity_id),
 							_debug_entity_state_name(int(entity_state)),
-							last_state == nullptr ? String("<new>") : _debug_entity_state_name(*last_state),
+							had_last_state ? _debug_entity_state_name(last_state) : String("<new>"),
 							p_is_discovery ? "true" : "false",
 							bounded2d_list.is_valid() ? "true" : "false",
 							marker_list.is_valid() ? "true" : "false"));
@@ -1023,6 +1039,20 @@ void OpenXRSpatialMarkerTrackingCapability::_process_snapshot(RID p_snapshot, RI
 						if (marker_tracker->get_marker_buffer_id() != buffer_id) {
 							marker_tracker->set_marker_data_with_buffer_id(marker_list->get_marker_data(p_snapshot, i), buffer_id);
 						}
+					}
+
+					// TEMPORARY INSTRUMENTATION: report what the app will actually see
+					// while this entity is tracking.
+					if (debug_state_changed) {
+						Ref<XRPose> debug_pose = marker_tracker->get_pose(SNAME("default"));
+						PackedByteArray debug_data = marker_tracker->get_marker_data();
+						print_line(vformat("OpenXR marker debug: entity=%d TRACKING pose_valid=%s confidence=%d origin=%s bounds=%s payload_bytes=%d",
+								uint64_t(entity_id),
+								(debug_pose.is_valid() && debug_pose->get_has_tracking_data()) ? "true" : "false",
+								debug_pose.is_valid() ? int(debug_pose->get_tracking_confidence()) : -1,
+								debug_pose.is_valid() ? String(debug_pose->get_transform().origin) : String("<none>"),
+								String(marker_tracker->get_bounds_size()),
+								debug_data.size()));
 					}
 				}
 
