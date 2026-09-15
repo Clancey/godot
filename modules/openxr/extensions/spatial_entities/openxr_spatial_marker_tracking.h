@@ -305,6 +305,15 @@ private:
 
 	// Trackers; maps each Spatial Context RID to their marker entities and trackers
 	HashMap<RID, HashMap<XrSpatialEntityIdEXT, Ref<OpenXRMarkerTracker>>> marker_trackers;
+
+	// TEMPORARY INSTRUMENTATION: diagnosing why marker entities can stay in the
+	// PAUSED tracking state on some runtimes even while their marker is visibly
+	// and continuously detected. Logs only on transitions, so it stays quiet.
+	HashMap<XrSpatialEntityIdEXT, int> debug_last_entity_state;
+	int debug_update_queries = 0;
+	int debug_update_results = 0;
+	int debug_heartbeat = 0;
+	static String _debug_entity_state_name(int p_entity_state);
 };
 
 VARIANT_BITFIELD_CAST(OpenXRSpatialMarkerTrackingCapability::MarkerTypeFlags);
