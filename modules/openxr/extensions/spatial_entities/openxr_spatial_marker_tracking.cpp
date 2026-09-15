@@ -512,6 +512,11 @@ void OpenXRSpatialMarkerTrackingCapability::on_session_created(const XrSession p
 	se_extension->connect(SNAME("spatial_discovery_recommended"), callable_mp(this, &OpenXRSpatialMarkerTrackingCapability::_on_spatial_discovery_recommended));
 
 	int marker_types = GLOBAL_GET_CACHED(int, "xr/openxr/extensions/spatial_entity/marker_tracking/enable_builtin_for_types");
+
+	// TEMPORARY INSTRUMENTATION: an OpenXR session restart re-runs all of this,
+	// which would recreate the spatial context and restart marker tracking.
+	print_line(vformat("OpenXR marker debug: on_session_created, enable_builtin_for_types=%d", marker_types));
+
 	if (marker_types != 0) {
 		// Start our builtin tracking system.
 		start_built_in_tracking(marker_types);
@@ -523,6 +528,8 @@ void OpenXRSpatialMarkerTrackingCapability::on_session_created(const XrSession p
 }
 
 void OpenXRSpatialMarkerTrackingCapability::on_session_destroyed() {
+	print_line("OpenXR marker debug: on_session_destroyed, stopping built-in marker tracking");
+
 	// Stop our built in tracking (if applicable), this will also clean up any markers previously detected.
 	stop_built_in_tracking();
 
@@ -553,6 +560,11 @@ void OpenXRSpatialMarkerTrackingCapability::on_process() {
 			} else {
 				built_in_retry_cooldown = BUILT_IN_RETRY_COOLDOWN;
 				built_in_retries_left--;
+
+				// TEMPORARY INSTRUMENTATION: each retry issues a new
+				// xrCreateSpatialContextAsyncEXT, which the runtime may surface as
+				// tearing down and recreating its marker tracking service.
+				print_line(vformat("OpenXR marker debug: retrying built-in tracking (retries_left=%d) - this re-creates the spatial context", built_in_retries_left));
 
 				builtin_tracking_state = OpenXRSpatialEntityExtension::TrackingState::TRACKING_NOT_ACTIVE;
 				start_built_in_tracking(built_in_marker_types);
@@ -773,6 +785,10 @@ void OpenXRSpatialMarkerTrackingCapability::stop_built_in_tracking(bool p_clear_
 
 	// If we have a spatial context, clean it up.
 	if (spatial_context.is_valid()) {
+		// TEMPORARY INSTRUMENTATION: destroying the spatial context is what makes
+		// a runtime shut its marker tracking service down.
+		print_line(vformat("OpenXR marker debug: destroying spatial context (clear_trackers=%s)", p_clear_trackers ? "true" : "false"));
+
 		OpenXRSpatialEntityExtension *se_extension = OpenXRSpatialEntityExtension::get_singleton();
 		ERR_FAIL_NULL(se_extension);
 
@@ -828,10 +844,15 @@ Ref<OpenXRFutureResult> OpenXRSpatialMarkerTrackingCapability::_create_spatial_c
 		return nullptr;
 	}
 
+	// TEMPORARY INSTRUMENTATION: creating a spatial context is a session-level
+	// operation; a runtime may start/stop its marker tracking service for each one.
+	print_line(vformat("OpenXR marker debug: creating spatial context with %d capability configuration(s)", int(capability_configurations.size())));
+
 	return se_extension->create_spatial_context(capability_configurations, nullptr, callable_mp(this, &OpenXRSpatialMarkerTrackingCapability::_on_spatial_context_created), callable_mp(this, &OpenXRSpatialMarkerTrackingCapability::_on_spatial_context_creation_failed));
 }
 
 void OpenXRSpatialMarkerTrackingCapability::_on_spatial_context_created(RID p_spatial_context) {
+	print_line("OpenXR marker debug: spatial context created, built-in marker tracking is now enabled");
 	builtin_tracking_state = OpenXRSpatialEntityExtension::TrackingState::TRACKING_ENABLED;
 	spatial_context = p_spatial_context;
 	need_discovery = true;
@@ -842,6 +863,8 @@ void OpenXRSpatialMarkerTrackingCapability::_on_spatial_context_created(RID p_sp
 
 void OpenXRSpatialMarkerTrackingCapability::_on_spatial_context_creation_failed(int p_xr_result, bool p_is_completion_failure) {
 	XrResult result = XrResult(p_xr_result);
+
+	print_line(vformat("OpenXR marker debug: spatial context creation failed (xr_result=%d, completion_failure=%s)", p_xr_result, p_is_completion_failure ? "true" : "false"));
 
 	switch (result) {
 		case XR_ERROR_PERMISSION_INSUFFICIENT:
