@@ -598,6 +598,19 @@ void OpenXRSpatialMarkerTrackingCapability::on_process() {
 		Ref<OpenXRSpatialComponentBounded2DList> bounded2d_list;
 		bounded2d_list.instantiate();
 		marker_update_component_data.push_back(bounded2d_list);
+
+		// Marker data list. Requesting this on every update (not just discovery)
+		// matters because the runtime decodes marker payloads asynchronously:
+		// a marker's XrSpatialMarkerDataEXT may not be ready yet at the single
+		// moment a discovery snapshot happened to run. Without re-requesting it
+		// here, a marker whose payload wasn't decoded during that one discovery
+		// pass would never get another chance, since further discoveries are
+		// rare (only on startup or a runtime-recommended re-discovery, with a
+		// cooldown). _process_snapshot() already only rewrites the payload when
+		// the marker's buffer id changes, so this adds no redundant decoding.
+		Ref<OpenXRSpatialComponentMarkerList> marker_list;
+		marker_list.instantiate();
+		marker_update_component_data.push_back(marker_list);
 	}
 
 	do_entity_update(spatial_context, marker_update_component_data);
