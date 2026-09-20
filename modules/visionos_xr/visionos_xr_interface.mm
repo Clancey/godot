@@ -1061,6 +1061,10 @@ Projection VisionOSXRInterface::RenderThread::get_projection_for_view(uint32_t p
 	double scaled_z_far = p_z_far / world_scale;
 	double scaled_z_near = p_z_near / world_scale;
 
+	if (scaled_z_near < minimum_supported_near_plane) {
+		WARN_PRINT_ONCE(vformat("visionOS: XRCamera3D near plane %f (world scale %f -> %f) is below the compositor's reported minimum of %f; the view will not render.", p_z_near, world_scale, scaled_z_near, minimum_supported_near_plane));
+	}
+
 	ERR_FAIL_COND_V_MSG(scaled_z_near < minimum_supported_near_plane, eye_projection, "Your XRCamera3D Near value is lower than the minimum value supported by the visionOS platform. Make sure that Near divided by XROrigin's World Scale is higher than or equal to the value returned by LayerRender.Capabilities.supportedMinimumNearPlaneDistance. This value is 0.1 for Apple Vision Pro.");
 
 	simd_float2 depth_range = simd_make_float2(scaled_z_far, scaled_z_near);
