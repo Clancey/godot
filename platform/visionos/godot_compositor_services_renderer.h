@@ -32,6 +32,8 @@
 
 #import "drivers/apple_embedded/godot_renderer.h"
 
+#import "modules/visionos_xr/visionos_definitions.h"
+
 #import <CompositorServices/CompositorServices.h>
 
 // UIKit never waits for engine work. Windowed mode retains its main-thread owner.
@@ -48,6 +50,8 @@ typedef NS_ENUM(NSInteger, GDTCompositorStartupState) {
 	GDTCompositorStartupStateClosed,
 };
 
+@class SpatialEventObjC;
+
 @interface GDTCompositorServicesRenderer : GDTRenderer
 
 @property(nonatomic, readonly) GDTCompositorStartupState startupState;
@@ -61,5 +65,7 @@ typedef NS_ENUM(NSInteger, GDTCompositorStartupState) {
 - (void)startRenderLoopWithCompletion:(void (^)(void))completion;
 - (void)renderFrame;
 - (void)worldRecentered;
+
+- (void)onSpatialEvent:(SpatialEventObjC *)event;
 
 @end
