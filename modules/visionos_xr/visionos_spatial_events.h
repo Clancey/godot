@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  godot_compositor_services_renderer.h                                  */
+/*  visionos_spatial_events.h                                             */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,42 +30,51 @@
 
 #pragma once
 
-#import "drivers/apple_embedded/godot_renderer.h"
+#ifdef VISIONOS_ENABLED
 
-#import "modules/visionos_xr/visionos_definitions.h"
+#include "visionos_definitions.h"
 
-#import <CompositorServices/CompositorServices.h>
+// Equivalent to https://developer.apple.com/documentation/swiftui/spatialeventcollection/event
+struct VisionOSSpatialEvent {
+	// Ray
+	bool has_ray;
+	Transform3D ray;
 
-// UIKit never waits for engine work. Windowed mode retains its main-thread owner.
-void visionos_dispatch_to_engine(void (^block)(void));
-void visionos_finish_engine(void);
+	// Hand
+	enum class Chirality : int {
+		none = 0,
+		left = 1,
+		right = 2
+	};
+	Chirality chirality;
+	Transform3D hand_pose;
 
-typedef NS_ENUM(NSInteger, GDTCompositorStartupState) {
-	GDTCompositorStartupStateLoading,
-	GDTCompositorStartupStatePreparingPipelines,
-	GDTCompositorStartupStateTrackingUnavailable,
-	GDTCompositorStartupStateFrameUnavailable,
-	GDTCompositorStartupStateReady,
-	GDTCompositorStartupStateFailed,
-	GDTCompositorStartupStateClosed,
+	// Phase
+	enum class Phase : int {
+		unknown = 0,
+		active = 1,
+		cancelled = 2,
+		ended = 3
+	};
+	Phase phase;
 };
 
-@class SpatialEventObjC;
+// Godot representation of visionOS spatial events.
+struct VisionOSSpatialEventTracking {
+	struct Hand {
+		// Hand pose when pinching and dragging
+		Ref<XRControllerTracker> tracker;
+		// Selection ray when pinched
+		Ref<XRControllerTracker> ray;
+	};
 
-@interface GDTCompositorServicesRenderer : GDTRenderer
+	// Left and right hands
+	Hand hands[2];
 
-@property(nonatomic, readonly) GDTCompositorStartupState startupState;
-@property(nonatomic) BOOL alphaBlendEnabled;
+	void initialize(XRServer *p_xr_server);
+	void uninitialize(XRServer *p_xr_server);
 
-- (instancetype)initWithLayerRenderer:(cp_layer_renderer_t)layer_renderer
-						 capabilities:(cp_layer_renderer_capabilities_t)capabilities;
+	void on_spatial_event(const VisionOSSpatialEvent &);
+};
 
-- (void)updateXRInterface;
-
-- (void)startRenderLoopWithCompletion:(void (^)(void))completion;
-- (void)renderFrame;
-- (void)worldRecentered;
-
-- (void)onSpatialEvent:(SpatialEventObjC *)event;
-
-@end
+#endif // VISIONOS_ENABLED
