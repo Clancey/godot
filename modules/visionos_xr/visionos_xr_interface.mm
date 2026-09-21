@@ -42,6 +42,7 @@
 #include "core/error/error_macros.h"
 #include "core/input/input.h"
 #include "core/math/transform_3d.h"
+#include "core/math/vector3.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "core/os/os.h"
@@ -55,6 +56,7 @@
 #include "servers/rendering/rendering_server.h" // ERR_NOT_ON_RENDER_THREAD_V
 #include "servers/rendering/rendering_server_globals.h"
 #include "servers/rendering/rendering_server_types.h"
+#include "servers/xr/xr_controller_tracker.h"
 #include "servers/xr/xr_server.h"
 
 #include "platform/visionos/godot_app_delegate_service_visionos.h"
@@ -239,6 +241,8 @@ bool VisionOSXRInterface::initialize() {
 	// Scene understanding
 	scene_understanding.initialize(ar_session, cs.world_tracking_provider);
 
+	spatial_events.initialize(xr_server);
+
 	// Running the ARKit session for head tracking, at first
 	run_ar_session();
 
@@ -321,6 +325,8 @@ void VisionOSXRInterface::uninitialize() {
 				xr_server->set_primary_interface(nullptr);
 			}
 		}
+
+		spatial_events.uninitialize(xr_server);
 
 		initialized = false;
 	}
@@ -679,6 +685,10 @@ void VisionOSXRInterface::run_ar_session() {
 	} else {
 		ar_session_run(ar_session, ar_data_providers);
 	}
+}
+
+void VisionOSXRInterface::on_spatial_event(const VisionOSSpatialEvent &p_event) {
+	spatial_events.on_spatial_event(p_event);
 }
 
 CFTimeInterval VisionOSXRInterface::get_trackable_anchor_time() {
