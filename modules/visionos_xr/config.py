@@ -12,6 +12,7 @@ def get_doc_classes():
         "VisionOSPlaneTracker",
         "VisionOSMeshTracker",
         "VisionOSAnchorTracker",
+        "VisionOSMarkerTracker",
         "VisionOSSpatialAnchorCapability",
     ]
 

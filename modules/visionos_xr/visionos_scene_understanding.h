@@ -34,10 +34,12 @@
 
 #include "visionos_anchor_tracker.h"
 #include "visionos_definitions.h"
+#include "visionos_marker_tracker.h"
 #include "visionos_mesh_tracker.h"
 #include "visionos_plane_tracker.h"
 #include "visionos_world_anchor_store.h"
 
+#include "core/io/image.h"
 #include "core/os/mutex.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/hash_set.h"
@@ -61,13 +63,23 @@ public:
 	// Local world anchors do not require world-sensing authorization.
 	VisionOSAuthorizationStatus authorization = VisionOSAuthorizationStatus::NOT_DETERMINED;
 
-	bool enabled() const { return plane_detection_enabled || scene_reconstruction_enabled || world_anchors_enabled; }
+	bool enabled() const { return plane_detection_enabled || scene_reconstruction_enabled || world_anchors_enabled || image_tracking_enabled; }
 	bool active() const { return enabled() && authorization == VisionOSAuthorizationStatus::ALLOWED; }
-	bool requires_world_sensing() const { return plane_detection_enabled || scene_reconstruction_enabled; }
+	bool requires_world_sensing() const { return plane_detection_enabled || scene_reconstruction_enabled || image_tracking_enabled; }
 
 	bool is_plane_detection_enabled() const { return plane_detection_enabled; }
 	bool is_scene_reconstruction_enabled() const { return scene_reconstruction_enabled; }
 	bool is_world_anchors_enabled() const { return world_anchors_enabled; }
+	bool is_image_tracking_enabled() const { return image_tracking_enabled; }
+	bool is_image_tracking_supported() const;
+
+	// Marker (reference image) tracking public API. Images can be registered
+	// before or after the session starts; changes rebuild the provider.
+	bool add_marker_reference_image(const String &p_name, const Ref<Image> &p_image, float p_physical_width);
+	void clear_marker_reference_images();
+	int get_marker_reference_image_count() const { return reference_images.size(); }
+	// True once after the provider set changed and the ARKit session must be re-run.
+	bool consume_providers_changed();
 	bool is_world_anchor_supported() const;
 	std::shared_ptr<VisionOSWorldAnchorStore> get_anchor_store() const { return anchor_store; }
 	uint64_t request_create_anchor(const Transform3D &p_transform, bool p_shared = false);
@@ -84,6 +96,7 @@ private:
 	bool plane_detection_enabled = false;
 	bool scene_reconstruction_enabled = false;
 	bool world_anchors_enabled = false;
+	bool image_tracking_enabled = false;
 	uint64_t lifecycle_revision = 0;
 	bool uninitializing = false;
 
@@ -92,6 +105,7 @@ private:
 	ar_world_tracking_provider_t world_tracking_provider = nullptr;
 	ar_plane_detection_provider_t plane_detection_provider = nullptr;
 	ar_scene_reconstruction_provider_t scene_reconstruction_provider = nullptr;
+	ar_image_tracking_provider_t image_tracking_provider = nullptr;
 
 	// UUID helper
 	static String uuid_to_string(const uuid_t p_uuid);
@@ -142,6 +156,37 @@ private:
 	void setup_scene_reconstruction();
 	void teardown_scene_reconstruction();
 	void process_mesh_updates();
+
+	// ---- Image (marker) tracking ----
+	struct ReferenceImage {
+		String name;
+		Ref<Image> image;
+		float physical_width = 0;
+	};
+	struct MarkerUpdate {
+		enum Type { ADDED,
+			UPDATED,
+			REMOVED };
+		Type type;
+		uint64_t anchor_id_hash;
+		String anchor_uuid_str;
+		String name;
+		Transform3D transform;
+		Vector2 physical_size;
+		float estimated_scale_factor = 1.0;
+		bool tracked = false;
+	};
+
+	LocalVector<ReferenceImage> reference_images;
+	bool providers_changed = false;
+	uint64_t image_tracking_revision = 0;
+	Mutex marker_mutex;
+	LocalVector<MarkerUpdate> pending_marker_updates;
+	HashMap<uint64_t, Ref<VisionOSMarkerTracker>> marker_trackers;
+
+	void setup_image_tracking();
+	void teardown_image_tracking();
+	void process_marker_updates();
 
 	// ---- World anchors ----
 	std::shared_ptr<VisionOSWorldAnchorStore> anchor_store = std::make_shared<VisionOSWorldAnchorStore>();

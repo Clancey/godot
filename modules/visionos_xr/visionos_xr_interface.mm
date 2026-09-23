@@ -105,6 +105,22 @@ bool VisionOSXRInterface::is_anchor_sharing_available() const {
 	return scene_understanding.is_anchor_sharing_available();
 }
 
+bool VisionOSXRInterface::is_image_tracking_supported() const {
+	return scene_understanding.is_image_tracking_supported();
+}
+
+bool VisionOSXRInterface::add_marker_reference_image(const String &p_name, const Ref<Image> &p_image, float p_physical_width) {
+	return scene_understanding.add_marker_reference_image(p_name, p_image, p_physical_width);
+}
+
+void VisionOSXRInterface::clear_marker_reference_images() {
+	scene_understanding.clear_marker_reference_images();
+}
+
+int VisionOSXRInterface::get_marker_reference_image_count() const {
+	return scene_understanding.get_marker_reference_image_count();
+}
+
 void VisionOSXRInterface::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_spatial_anchor_capability"), &VisionOSXRInterface::get_spatial_anchor_capability);
 	// Signals
@@ -120,6 +136,10 @@ void VisionOSXRInterface::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("create_spatial_anchor", "transform", "shared"), &VisionOSXRInterface::create_spatial_anchor, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("remove_spatial_anchor", "anchor"), &VisionOSXRInterface::remove_spatial_anchor);
 	ClassDB::bind_method(D_METHOD("is_anchor_sharing_available"), &VisionOSXRInterface::is_anchor_sharing_available);
+	ClassDB::bind_method(D_METHOD("is_image_tracking_supported"), &VisionOSXRInterface::is_image_tracking_supported);
+	ClassDB::bind_method(D_METHOD("add_marker_reference_image", "name", "image", "physical_width"), &VisionOSXRInterface::add_marker_reference_image);
+	ClassDB::bind_method(D_METHOD("clear_marker_reference_images"), &VisionOSXRInterface::clear_marker_reference_images);
+	ClassDB::bind_method(D_METHOD("get_marker_reference_image_count"), &VisionOSXRInterface::get_marker_reference_image_count);
 
 	BIND_ENUM_CONSTANT(IMMERSION_STYLE_FULL);
 	BIND_ENUM_CONSTANT(IMMERSION_STYLE_MIXED);
@@ -634,6 +654,7 @@ void VisionOSXRInterface::update_from_authorizations(ar_authorization_results_t 
 }
 
 void VisionOSXRInterface::run_ar_session() {
+	scene_understanding.consume_providers_changed();
 	ar_data_providers_t ar_data_providers = ar_data_providers_create();
 
 	if (cs.enabled) {
@@ -693,6 +714,10 @@ void VisionOSXRInterface::process() {
 		return;
 	}
 	if (scene_understanding.enabled()) {
+		// Registering marker images replaces the image provider; ARKit only picks it up on a re-run.
+		if (scene_understanding.consume_providers_changed() && scene_understanding.active()) {
+			run_ar_session();
+		}
 		scene_understanding.process();
 	}
 	if (!initialized) {

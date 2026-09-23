@@ -3772,6 +3772,18 @@
 		<member name="xr/visionos/persistent_system_overlays" type="int" setter="" getter="" default="0">
 			Initial visibility of the system overlays, such as the Home indicator, for the visionOS XR module's immersive scene. Change it at runtime with [member VisionOSXRInterface.persistent_system_overlays]. See [url=https://developer.apple.com/documentation/swiftui/view/persistentsystemoverlays(_:)]persistentSystemOverlays(_:)[/url].
 		</member>
+		<member name="xr/visionos/scene_understanding/enable_image_tracking" type="bool" setter="" getter="" default="false">
+			If [code]true[/code], the visionOS XR module runs an ARKit image tracking provider for images registered with [method VisionOSXRInterface.add_marker_reference_image], and publishes each detected image as a [VisionOSMarkerTracker]. Requires world-sensing authorization.
+		</member>
+		<member name="xr/visionos/scene_understanding/enable_plane_detection" type="bool" setter="" getter="" default="false">
+			If [code]true[/code], the visionOS XR module runs ARKit plane detection. Requires world-sensing authorization.
+		</member>
+		<member name="xr/visionos/scene_understanding/enable_scene_reconstruction" type="bool" setter="" getter="" default="false">
+			If [code]true[/code], the visionOS XR module runs ARKit scene reconstruction. Requires world-sensing authorization.
+		</member>
+		<member name="xr/visionos/scene_understanding/enable_world_anchors" type="bool" setter="" getter="" default="false">
+			If [code]true[/code], the visionOS XR module runs ARKit world tracking anchors, see [method VisionOSXRInterface.create_spatial_anchor].
+		</member>
 		<member name="xr/visionos/upper_limb_visibility" type="int" setter="" getter="" default="0">
 			Initial visibility of the user's upper limbs for the visionOS XR module's immersive scene. Change it at runtime with [member VisionOSXRInterface.upper_limb_visibility]. See [url=https://developer.apple.com/documentation/swiftui/scene/upperlimbvisibility(_:)]upperLimbVisibility(_:)[/url].
 		</member>

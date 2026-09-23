@@ -292,6 +292,10 @@ public:
 	Ref<VisionOSAnchorTracker> create_spatial_anchor(const Transform3D &p_transform, bool p_shared = false);
 	void remove_spatial_anchor(Ref<VisionOSAnchorTracker> p_anchor);
 	bool is_anchor_sharing_available() const;
+	bool is_image_tracking_supported() const;
+	bool add_marker_reference_image(const String &p_name, const Ref<Image> &p_image, float p_physical_width);
+	void clear_marker_reference_images();
+	int get_marker_reference_image_count() const;
 	VisionOSSceneUnderstanding *get_scene_understanding() { return &scene_understanding; }
 
 	// Methods called from the game thread

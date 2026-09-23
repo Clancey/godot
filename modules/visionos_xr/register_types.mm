@@ -33,6 +33,7 @@
 #include "register_types.h"
 
 #include "visionos_anchor_tracker.h"
+#include "visionos_marker_tracker.h"
 #include "visionos_mesh_tracker.h"
 #include "visionos_plane_tracker.h"
 #include "visionos_spatial_anchor_capability.h"
@@ -53,6 +54,7 @@ void initialize_visionos_xr_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(VisionOSPlaneTracker);
 	GDREGISTER_CLASS(VisionOSMeshTracker);
 	GDREGISTER_CLASS(VisionOSAnchorTracker);
+	GDREGISTER_CLASS(VisionOSMarkerTracker);
 	GDREGISTER_CLASS(VisionOSSpatialAnchorCapability);
 
 	// Exposed as a singleton, mirroring OpenXRSpatialAnchorCapability.
