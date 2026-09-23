@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="VisionOSMarkerTracker" inherits="XRPositionalTracker" experimental="" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A tracker for a reference image, such as a printed QR code, found by ARKit.
+	</brief_description>
+	<description>
+		Represents an ARKit image anchor for an image registered with [method VisionOSXRInterface.add_marker_reference_image]. Trackers are named [code]visionos/marker/&lt;uuid&gt;[/code] and added to the [XRServer] when ARKit first finds the image.
+		The [code]default[/code] pose follows the OpenXR spatial marker convention: the origin is the image center, +X points to the image's right, +Y towards its top edge, and +Z out of the printed face. While [member marker_tracked] is [code]false[/code] the last pose is kept with [constant XRPose.XR_TRACKING_CONFIDENCE_LOW].
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="bounds_size" type="Vector2" setter="" getter="get_bounds_size" default="Vector2(0, 0)">
+			The registered physical size in meters, multiplied by [member estimated_scale_factor].
+		</member>
+		<member name="estimated_scale_factor" type="float" setter="" getter="get_estimated_scale_factor" default="1.0">
+			ARKit's estimate of the printed size relative to the registered physical size.
+		</member>
+		<member name="marker_data" type="String" setter="" getter="get_marker_data" default="&quot;&quot;">
+			The name the reference image was registered with.
+		</member>
+		<member name="marker_tracked" type="bool" setter="" getter="get_marker_tracked" default="false">
+			If [code]true[/code], ARKit currently sees the image and the pose is current.
+		</member>
+		<member name="marker_uuid" type="String" setter="" getter="get_marker_uuid" default="&quot;&quot;">
+			The UUID ARKit assigned to this image anchor.
+		</member>
+		<member name="physical_size" type="Vector2" setter="" getter="get_physical_size" default="Vector2(0, 0)">
+			The physical size in meters the reference image was registered with.
+		</member>
+	</members>
+	<signals>
+		<signal name="tracking_state_changed">
+			<param index="0" name="is_tracked" type="bool" />
+			<description>
+				Emitted when ARKit starts or stops seeing the image.
+			</description>
+		</signal>
+	</signals>
+</class>

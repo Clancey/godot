@@ -8,7 +8,7 @@
 		- the CompositorServices module, to render with Godot in immersive mode
 		- the hand tracking module, using Apple's ARKit
 		- the spatial controller module, using Apple's ARKit and GCController
-		- the scene understanding module, using Apple's ARKit, for plane detection, scene reconstruction, and world anchors.
+		- the scene understanding module, using Apple's ARKit, for plane detection, scene reconstruction, image (marker) tracking, and world anchors.
 		Those modules can be enabled/disabled independently. The rendering module uses the CompositorServices framework to render an Immersive scene. It supports the full and mixed immersion modes. To use this module, you must set the [member EditorExportPlatformVisionOS.application/app_role] export setting to [code]Immersive[/code]. You can choose the immersion style using the [member EditorExportPlatformVisionOS.application/immersion_style] export setting. You must use the Metal rendering driver, and only the Mobile renderer is supported for now. You can initialize this interface in the [method Node._ready] method of any of your nodes as follows:
 		[codeblock]
 		func _ready() -> void:
@@ -29,10 +29,58 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="add_marker_reference_image">
+			<return type="bool" />
+			<param index="0" name="name" type="String" />
+			<param index="1" name="image" type="Image" />
+			<param index="2" name="physical_width" type="float" />
+			<description>
+				Registers [param image] (for example a rendered QR code) as a reference image ARKit should look for, with its printed width in meters. When found, a [VisionOSMarkerTracker] is added to the [XRServer] whose [member VisionOSMarkerTracker.marker_data] is [param name]. Requires the [code]xr/visionos/scene_understanding/enable_image_tracking[/code] project setting and world-sensing authorization. Images may be registered before or after initialization; each change rebuilds the image tracking provider and re-runs the ARKit session. Returns [code]false[/code] if the image is empty, the width is not positive, or [param name] is already registered.
+			</description>
+		</method>
+		<method name="clear_marker_reference_images">
+			<return type="void" />
+			<description>
+				Removes every registered marker reference image and its trackers.
+			</description>
+		</method>
+		<method name="create_spatial_anchor">
+			<return type="VisionOSAnchorTracker" />
+			<param index="0" name="transform" type="Transform3D" />
+			<param index="1" name="shared" type="bool" default="false" />
+			<description>
+				Creates an ARKit world anchor at [param transform] and returns its tracker. Set [param shared] to [code]true[/code] to share the anchor with nearby participants when [method is_anchor_sharing_available] returns [code]true[/code]. Requires the [code]xr/visionos/scene_understanding/enable_world_anchors[/code] project setting.
+			</description>
+		</method>
+		<method name="get_marker_reference_image_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of registered marker reference images.
+			</description>
+		</method>
 		<method name="get_spatial_anchor_capability" qualifiers="const">
 			<return type="VisionOSSpatialAnchorCapability" />
 			<description>
-				Returns the same capability available through [method Engine.get_singleton] as [code]VisionOSSpatialAnchorCapability[/code]. This does not create another ARKit session or world tracking provider. Check its status before requesting or applying an anchor pose.
+				Returns the same capability available through [method Engine.get_singleton] as [code skip-lint]VisionOSSpatialAnchorCapability[/code]. This does not create another ARKit session or world tracking provider. Check its status before requesting or applying an anchor pose.
+			</description>
+		</method>
+		<method name="is_anchor_sharing_available" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] if world anchors can currently be shared with nearby participants.
+			</description>
+		</method>
+		<method name="is_image_tracking_supported" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] if ARKit image tracking is available on this device. It is not available in the simulator.
+			</description>
+		</method>
+		<method name="remove_spatial_anchor">
+			<return type="void" />
+			<param index="0" name="anchor" type="VisionOSAnchorTracker" />
+			<description>
+				Removes an anchor created with [method create_spatial_anchor] from ARKit and the [XRServer].
 			</description>
 		</method>
 	</methods>

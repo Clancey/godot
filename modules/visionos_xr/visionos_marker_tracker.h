@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  register_types.mm                                                     */
+/*  visionos_marker_tracker.h                                             */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,72 +28,49 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+#pragma once
+
 #ifdef VISIONOS_ENABLED
 
-#include "register_types.h"
+#include "servers/xr/xr_positional_tracker.h"
 
-#include "visionos_anchor_tracker.h"
-#include "visionos_marker_tracker.h"
-#include "visionos_mesh_tracker.h"
-#include "visionos_plane_tracker.h"
-#include "visionos_spatial_anchor_capability.h"
-#include "visionos_xr_interface.h"
+// A registered reference image (for example a printed QR code) that ARKit
+// found in the user's surroundings. The pose follows the OpenXR spatial marker
+// convention: origin at the image center, +X to the image's right, +Y towards
+// the image's top edge and +Z out of the printed face.
+class VisionOSMarkerTracker : public XRPositionalTracker {
+	GDCLASS(VisionOSMarkerTracker, XRPositionalTracker);
 
-#include "core/config/engine.h"
-#include "core/object/class_db.h"
+public:
+	VisionOSMarkerTracker();
 
-Ref<VisionOSXRInterface> visionos_xr;
-VisionOSSpatialAnchorCapability *visionos_anchor_capability = nullptr;
+	void set_marker_uuid(const String &p_uuid);
+	String get_marker_uuid() const;
 
-void initialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
+	void set_marker_data(const String &p_marker_data);
+	String get_marker_data() const;
 
-	GDREGISTER_CLASS(VisionOSXRInterface);
-	GDREGISTER_CLASS(VisionOSPlaneTracker);
-	GDREGISTER_CLASS(VisionOSMeshTracker);
-	GDREGISTER_CLASS(VisionOSAnchorTracker);
-	GDREGISTER_CLASS(VisionOSMarkerTracker);
-	GDREGISTER_CLASS(VisionOSSpatialAnchorCapability);
+	void set_physical_size(const Vector2 &p_physical_size);
+	Vector2 get_physical_size() const;
 
-	// Exposed as a singleton, mirroring OpenXRSpatialAnchorCapability.
-	visionos_anchor_capability = memnew(VisionOSSpatialAnchorCapability);
-	Engine::get_singleton()->add_singleton(Engine::Singleton("VisionOSSpatialAnchorCapability", visionos_anchor_capability));
+	void set_estimated_scale_factor(float p_scale_factor);
+	float get_estimated_scale_factor() const;
 
-	if (XRServer::get_singleton()) {
-		visionos_xr.instantiate();
-		visionos_anchor_capability->set_scene_understanding(visionos_xr->get_scene_understanding());
-		XRServer::get_singleton()->add_interface(visionos_xr);
-	}
-}
+	// Physical size corrected by ARKit's estimated scale factor.
+	Vector2 get_bounds_size() const;
 
-void uninitialize_visionos_xr_module(ModuleInitializationLevel p_level) {
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-		return;
-	}
+	void set_marker_tracked(bool p_tracked);
+	bool get_marker_tracked() const;
 
-	if (visionos_xr.is_valid()) {
-		visionos_anchor_capability->set_scene_understanding(nullptr);
-		// uninitialize our interface if it is initialized
-		if (visionos_xr->is_initialized()) {
-			visionos_xr->uninitialize();
-		}
+protected:
+	static void _bind_methods();
 
-		// unregister our interface from the XR server
-		if (XRServer::get_singleton()) {
-			XRServer::get_singleton()->remove_interface(visionos_xr);
-		}
-
-		// and release
-		visionos_xr.unref();
-	}
-
-	if (visionos_anchor_capability != nullptr) {
-		Engine::get_singleton()->remove_singleton("VisionOSSpatialAnchorCapability");
-		memdelete(visionos_anchor_capability);
-		visionos_anchor_capability = nullptr;
-	}
-}
+private:
+	String uuid;
+	String marker_data;
+	Vector2 physical_size;
+	float estimated_scale_factor = 1.0;
+	bool tracked = false;
+};
 
 #endif // VISIONOS_ENABLED

@@ -2930,6 +2930,8 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 	GLOBAL_DEF_BASIC("xr/visionos/scene_understanding/enable_plane_detection", false);
 	GLOBAL_DEF_BASIC("xr/visionos/scene_understanding/enable_scene_reconstruction", false);
 	GLOBAL_DEF_BASIC("xr/visionos/scene_understanding/enable_world_anchors", false);
+	// Tracks reference images (for example printed QR markers) registered with VisionOSXRInterface.add_marker_reference_image().
+	GLOBAL_DEF_BASIC("xr/visionos/scene_understanding/enable_image_tracking", false);
 	// Dynamic render quality, to be used at runtime depending on the complexity of your scene, see https://developer.apple.com/documentation/compositorservices/defining-layer-renderer-quality.
 	GLOBAL_DEF_BASIC("xr/visionos/dynamic_render_quality/enable", false);
 	// The default value of 0.38 is equivalent to https://developer.apple.com/documentation/compositorservices/layerrenderer/capabilities/defaultrenderquality.
