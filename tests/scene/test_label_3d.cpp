@@ -40,6 +40,8 @@
 
 TEST_FORCE_LINK(test_label_3d)
 
+#ifndef _3D_DISABLED
+
 namespace TestLabel3D {
 
 static String material_code(const Ref<BaseMaterial3D> &p_material) {
@@ -311,3 +313,5 @@ TEST_CASE("[SceneTree][Label3D] Depth comparison enum values survive text and bi
 }
 
 } // namespace TestLabel3D
+
+#endif // _3D_DISABLED

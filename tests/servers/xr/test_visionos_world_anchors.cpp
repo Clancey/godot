@@ -41,6 +41,8 @@
 
 TEST_FORCE_LINK(test_visionos_world_anchors)
 
+#ifndef _3D_DISABLED
+
 namespace TestVisionOSWorldAnchors {
 
 using Store = VisionOSWorldAnchorStore;
@@ -449,8 +451,10 @@ public:
 	void process() override {}
 	Size2 get_render_target_size() override { return Size2(1, 1); }
 	uint32_t get_view_count() override { return 1; }
+#ifndef DISABLE_DEPRECATED
 	Transform3D get_transform_for_view(uint32_t, const Transform3D &) override { return camera; }
 	Projection get_projection_for_view(uint32_t, double, double, double) override { return Projection(); }
+#endif
 	TypedArray<Projection> get_camera_projections(const StringName &, double, double, double) override { return TypedArray<Projection>(); }
 	TypedArray<Transform3D> get_camera_offsets(const StringName &) override { return TypedArray<Transform3D>(); }
 	Vector<RenderingServerTypes::BlitToScreen> post_draw_viewport(RID, const Rect2 &) override { return {}; }
@@ -504,3 +508,5 @@ TEST_CASE("[visionOS][WorldAnchors][SceneTree] Raw anchor poses match production
 }
 
 } // namespace TestVisionOSWorldAnchors
+
+#endif // _3D_DISABLED
