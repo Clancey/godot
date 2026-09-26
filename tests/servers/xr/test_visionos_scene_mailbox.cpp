@@ -114,6 +114,14 @@ TEST_CASE("[visionOS] Optical hand aim points anatomically forward without chang
 			CHECK(stable_aim.origin == palm.origin);
 			CHECK(Math::abs((-palm.basis.get_column(2)).dot(forward)) < 0.00001);
 
+			const Transform3D grip = visionos_hand_grip_pose(hand);
+			const Vector3 thumb_side = anchor.basis.xform(Vector3(left ? 1 : -1, 0, 0));
+			CHECK((-grip.basis.get_column(2)).is_equal_approx(forward));
+			CHECK(grip.basis.get_column(1).is_equal_approx(thumb_side));
+			CHECK(grip.basis.get_column(0).is_equal_approx(left ? -dorsal : dorsal));
+			CHECK(grip.basis.determinant() == doctest::Approx(1));
+			CHECK(grip.origin == palm.origin);
+
 			for (int articulation = 0; articulation < 3; articulation++) {
 				const Transform3D proximal(anchor.basis * Basis(Vector3(1, 0, 0), articulation * 0.7), knuckle);
 				const Transform3D tip(proximal.basis, anchor.xform(Vector3(0.02, -articulation * 0.03, -0.14 + articulation * 0.035)));

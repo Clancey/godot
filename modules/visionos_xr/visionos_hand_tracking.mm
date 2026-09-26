@@ -311,14 +311,13 @@ void VisionOSHandTracking::publish_gestures(HandIndex p_hand, const Ref<XRContro
 		return;
 	}
 
-	const Transform3D palm = hand_tracker->get_hand_joint_transform(XRHandTracker::HAND_JOINT_PALM);
-
 	const Transform3D aim = visionos_hand_aim_pose(hand_tracker);
+	const Transform3D grip = visionos_hand_grip_pose(hand_tracker);
 
 	p_controller_tracker->set_pose("default", aim, Vector3(), Vector3());
 	p_controller_tracker->set_pose("aim", aim, Vector3(), Vector3());
-	p_controller_tracker->set_pose("grip", palm, Vector3(), Vector3());
-	p_controller_tracker->set_pose("palm", palm, Vector3(), Vector3());
+	p_controller_tracker->set_pose("grip", grip, Vector3(), Vector3());
+	p_controller_tracker->set_pose("palm", grip, Vector3(), Vector3());
 }
 
 void VisionOSHandTracking::reset_hand_tracker_data(Ref<XRHandTracker> p_hand_tracker) {
