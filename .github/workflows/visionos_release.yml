@@ -374,15 +374,27 @@ jobs:
             flags+=(--prerelease)
           fi
 
-          if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
-            if [ "$TAG" = "visionos-latest" ]; then
-              # Rolling release: drop the old one so the tag re-points at this commit.
-              gh release delete "$TAG" --repo "${{ github.repository }}" --yes --cleanup-tag
-            else
-              # Versioned tag already published: refresh its assets in place.
-              gh release upload "$TAG" --repo "${{ github.repository }}" --clobber release/*
-              exit 0
+          REPO="${{ github.repository }}"
+
+          if [ "$TAG" = "visionos-latest" ]; then
+            # Rolling release: upload everything to a draft first (drafts create no git tag),
+            # then swap it in, so downstream never sees a release with partial assets.
+            STAGING="visionos-latest-staging-${{ github.run_id }}-${{ github.run_attempt }}"
+            gh release list --repo "$REPO" --limit 100 --json tagName,isDraft \
+              --jq '.[] | select(.isDraft and (.tagName | startswith("visionos-latest-staging-"))) | .tagName' |
+              while read -r stale; do gh release delete "$stale" --repo "$REPO" --yes || true; done
+            gh release create "$STAGING" --repo "$REPO" --draft "${flags[@]}" release/*
+            if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+              gh release delete "$TAG" --repo "$REPO" --yes --cleanup-tag
             fi
+            gh release edit "$STAGING" --repo "$REPO" --tag "$TAG" --draft=false
+            exit 0
           fi
 
-          gh release create "$TAG" --repo "${{ github.repository }}" "${flags[@]}" release/*
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            # Versioned tag already published: refresh its assets in place.
+            gh release upload "$TAG" --repo "$REPO" --clobber release/*
+            exit 0
+          fi
+
+          gh release create "$TAG" --repo "$REPO" "${flags[@]}" release/*
