@@ -789,7 +789,13 @@ TypedArray<Projection> VisionOSXRInterface::get_camera_projections(const StringN
 	double scaled_z_near = p_z_near / world_scale;
 	double scaled_z_far = p_z_far / world_scale;
 
-	ERR_FAIL_COND_V_MSG(scaled_z_near < minimum_supported_near_plane, ret, "Your XRCamera3D Near value is lower than the minimum value supported by the visionOS platform. Make sure that Near divided by XROrigin's World Scale is higher than or equal to the value returned by LayerRender.Capabilities.supportedMinimumNearPlaneDistance. This value is 0.1 for Apple Vision Pro.");
+	if (scaled_z_near < minimum_supported_near_plane) {
+		// Returning no projections would make XRServer fall back to the deprecated per-view path,
+		// which has no frame to read from, so clamp instead and let the frame render.
+		WARN_PRINT_ONCE("Your XRCamera3D Near value is lower than the minimum value supported by the visionOS platform, so it is clamped. Make sure that Near divided by XROrigin's World Scale is higher than or equal to the value returned by LayerRender.Capabilities.supportedMinimumNearPlaneDistance. This value is 0.1 for Apple Vision Pro.");
+		scaled_z_near = minimum_supported_near_plane;
+		scaled_z_far = MAX(scaled_z_far, scaled_z_near + CMP_EPSILON);
+	}
 
 	simd_float2 depth_range = simd_make_float2(scaled_z_far, scaled_z_near);
 	auto presentation = visionos_get_presentation();
@@ -799,6 +805,12 @@ TypedArray<Projection> VisionOSXRInterface::get_camera_projections(const StringN
 	rendering_server = RenderingServer::get_singleton();
 	ERR_FAIL_NULL_V(rendering_server, ret);
 	rendering_server->call_on_render_thread(callable_mp(&rt, &RenderThread::set_near_and_far).bind(scaled_z_near, scaled_z_far));
+
+	return build_camera_projections(world_scale);
+}
+
+TypedArray<Projection> VisionOSXRInterface::build_camera_projections(float p_world_scale) const {
+	TypedArray<Projection> ret;
 
 	// Godot renderers work in the normalized [-1, 1] depth space, and they do a final z remap of the projection matrixes to the [0, 1] depth space in RenderSceneDataRD::update_ubo().
 	// Compositor Services projection matrices are already in the [0, 1] depth space, so we need to apply the inverse z remap before passing them to the renderer.
@@ -813,7 +825,7 @@ TypedArray<Projection> VisionOSXRInterface::get_camera_projections(const StringN
 	m[14] = 1.0;
 
 	Projection world_scale_correction;
-	world_scale_correction.make_scale(Vector3(1, 1, world_scale));
+	world_scale_correction.make_scale(Vector3(1, 1, p_world_scale));
 	world_scale_correction = reverse_z.inverse() * world_scale_correction * reverse_z;
 
 	for (uint32_t v = 0; v < 2; v++) {
