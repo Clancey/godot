@@ -828,7 +828,7 @@ TypedArray<Projection> VisionOSXRInterface::build_camera_projections(float p_wor
 	world_scale_correction.make_scale(Vector3(1, 1, p_world_scale));
 	world_scale_correction = reverse_z.inverse() * world_scale_correction * reverse_z;
 
-	for (uint32_t v = 0; v < 2; v++) {
+	for (uint32_t v = 0; v < VISIONOS_RENDER_VIEW_COUNT; v++) {
 		Projection view_projection;
 		if (engine_geometry) {
 			view_projection = MTL::simd_to_projection(engine_geometry->projection[v]);
@@ -853,7 +853,7 @@ TypedArray<Transform3D> VisionOSXRInterface::get_camera_offsets(const StringName
 	ERR_FAIL_NULL_V(xr_server, ret);
 	float world_scale = xr_server->get_world_scale();
 
-	for (uint32_t v = 0; v < 2; v++) {
+	for (uint32_t v = 0; v < VISIONOS_RENDER_VIEW_COUNT; v++) {
 		Transform3D offset = engine_geometry ? MTL::simd_to_transform3D(engine_geometry->head_from_eye[v]) : Transform3D(Basis(), Vector3(v == 0 ? -0.03 : 0.03, 0.0, 0.0));
 		offset.origin *= world_scale;
 		ret.push_back(offset);
@@ -898,7 +898,7 @@ void VisionOSXRInterface::RenderThread::select_frame_geometry(uint64_t p_serial)
 
 uint32_t VisionOSXRInterface::RenderThread::get_view_count() {
 	// No need for ERR_NOT_ON_RENDER_THREAD
-	return 2;
+	return VISIONOS_RENDER_VIEW_COUNT;
 }
 
 Transform3D VisionOSXRInterface::RenderThread::get_camera_transform() {
