@@ -8,38 +8,66 @@ env:
   SCONS_FLAGS: >-
     dev_mode=yes
     module_text_server_fb_enabled=yes
+    tests=no
     debug_symbols=no
 
 jobs:
   visionos-template:
     # From https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job#choosing-github-hosted-runners
     runs-on: macos-26
-    name: Template (target=template_release)
-    timeout-minutes: 60
+    name: ${{ matrix.name }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Template device (target=template_release)
+            cache-name: visionos-template
+            scons-flags: arch=arm64
+
+          - name: Template simulator (target=template_release, simulator=yes)
+            cache-name: visionos-template-simulator
+            scons-flags: arch=arm64 simulator=yes
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
       - name: Restore Godot build cache
         uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: ${{ matrix.cache-name }}
         continue-on-error: true
 
       - name: Setup Python and SCons
         uses: ./.github/actions/godot-deps
 
-      - name: Compilation (arm64)
+      - name: Verify visionOS SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! xcrun --sdk xros --show-sdk-path > /dev/null 2>&1; then
+            echo "visionOS SDK missing, downloading platform..."
+            sudo xcodebuild -downloadPlatform visionOS
+          fi
+          xcrun --sdk xros --show-sdk-path
+
+      - name: Compilation
         uses: ./.github/actions/godot-build
         with:
-          scons-flags: ${{ env.SCONS_FLAGS }}
+          scons-flags: ${{ env.SCONS_FLAGS }} ${{ matrix.scons-flags }}
           platform: visionos
           target: template_release
 
       - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: ${{ matrix.cache-name }}
         continue-on-error: true
 
       - name: Upload artifact
         uses: ./.github/actions/upload-artifact
+        with:
+          name: ${{ matrix.cache-name }}
