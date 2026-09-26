@@ -42,6 +42,18 @@
 #include <SDL3/SDL_iostream.h>
 #include <SDL3/SDL_joystick.h>
 
+#if defined(IOS_ENABLED) || defined(VISIONOS_ENABLED)
+#include <SDL3/SDL_filesystem.h>
+
+// SDL_IOFromFile() resolves relative paths through SDL_GetPrefPath() on iOS-family platforms, but these
+// platforms build SDL with SDL_FILESYSTEM_DUMMY and no filesystem backend is vendored. Godot never opens
+// SDL files by relative path, so report the call as unsupported instead of failing to link.
+extern "C" char *SDLCALL SDL_GetPrefPath(const char *p_org, const char *p_app) {
+	SDL_Unsupported();
+	return nullptr;
+}
+#endif
+
 // Macro to skip the SDL joystick event handling if the device is an SDL gamepad, because
 // there are separate events for SDL gamepads
 #define SKIP_EVENT_FOR_GAMEPAD \
