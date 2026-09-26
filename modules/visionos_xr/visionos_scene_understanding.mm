@@ -979,12 +979,16 @@ void VisionOSSceneUnderstanding::setup_anchor_lifecycle() {
 	const uint64_t observer = store->watch_provider();
 	ar_world_tracking_provider_t provider = world_tracking_provider;
 	visionos_tracking_access().perform([&] {
+		// Blocks created inside a [&] lambda would capture these by reference to this stack frame, and ARKit invokes them later.
+		const auto block_store = store;
+		const uint64_t block_observer = observer;
+		const ar_world_tracking_provider_t block_provider = provider;
 		ar_session_set_data_provider_state_change_handler(ar_session,
 				dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
 				^(ar_data_providers_t providers, ar_data_provider_state_t state, ar_error_t error, ar_data_provider_t failed_provider) {
 					ar_data_providers_enumerate_data_providers(providers, ^bool(ar_data_provider_t changed_provider) {
-						if (changed_provider == provider) {
-							store->provider_changed(observer);
+						if (changed_provider == block_provider) {
+							block_store->provider_changed(block_observer);
 							return false;
 						}
 						return true;
@@ -1005,6 +1009,10 @@ void VisionOSSceneUnderstanding::setup_world_anchors() {
 	const auto sharing = anchor_sharing_available;
 	anchor_handlers_installed = true;
 	visionos_tracking_access().perform([&] {
+		// Blocks created inside a [&] lambda would capture these by reference to this stack frame, and ARKit invokes them later.
+		const auto block_store = store;
+		const uint64_t block_generation = generation;
+		const auto block_sharing = sharing;
 		ar_world_tracking_provider_set_anchor_update_handler(world_tracking_provider,
 				dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
 				^(ar_world_anchors_t added, ar_world_anchors_t updated, ar_world_anchors_t removed) {
@@ -1014,7 +1022,7 @@ void VisionOSSceneUnderstanding::setup_world_anchors() {
 							continue;
 						}
 						ar_world_anchors_enumerate_anchors(collection, ^bool(ar_world_anchor_t anchor) {
-							store->update(generation, world_anchor_record(anchor), kind == 2);
+							block_store->update(block_generation, world_anchor_record(anchor), kind == 2);
 							return true;
 						});
 					}
@@ -1022,8 +1030,8 @@ void VisionOSSceneUnderstanding::setup_world_anchors() {
 		ar_world_tracking_provider_set_world_anchor_sharing_availability_update_handler(world_tracking_provider,
 				dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0),
 				^(ar_world_anchor_sharing_availability_t availability) {
-					if (store->get_status().generation == generation && store->get_status().running) {
-						sharing->set_to(availability == ar_world_anchor_sharing_availability_available);
+					if (block_store->get_status().generation == block_generation && block_store->get_status().running) {
+						block_sharing->set_to(availability == ar_world_anchor_sharing_availability_available);
 					}
 				});
 	});
@@ -1173,8 +1181,12 @@ uint64_t VisionOSSceneUnderstanding::request_create_anchor(const Transform3D &p_
 	if (request) {
 		last_created_uuid = text;
 		visionos_tracking_access().perform([&] {
+			// Blocks created inside a [&] lambda would capture these by reference to this stack frame, and ARKit invokes them later.
+			const auto block_store = store;
+			const uint64_t block_generation = generation;
+			const uint64_t block_request = request;
 			ar_world_tracking_provider_add_anchor(world_tracking_provider, anchor, ^(ar_world_anchor_t p_anchor, bool successful, ar_error_t error) {
-				store->complete(generation, request, successful && error == nullptr, error ? ar_error_get_error_code(error) : FAILED, world_anchor_error(error, successful));
+				block_store->complete(block_generation, block_request, successful && error == nullptr, error ? ar_error_get_error_code(error) : FAILED, world_anchor_error(error, successful));
 			});
 		});
 	}
@@ -1206,8 +1218,12 @@ uint64_t VisionOSSceneUnderstanding::request_remove_anchor(const String &p_uuid)
 	const uint64_t request = store->begin("remove", text);
 	if (request) {
 		visionos_tracking_access().perform([&] {
+			// Blocks created inside a [&] lambda would capture these by reference to this stack frame, and ARKit invokes them later.
+			const auto block_store = store;
+			const uint64_t block_generation = generation;
+			const uint64_t block_request = request;
 			ar_world_tracking_provider_remove_anchor_with_identifier(world_tracking_provider, uuid, ^(ar_world_anchor_t p_removed, bool successful, ar_error_t error) {
-				store->complete(generation, request, successful && error == nullptr, error ? ar_error_get_error_code(error) : FAILED, world_anchor_error(error, successful));
+				block_store->complete(block_generation, block_request, successful && error == nullptr, error ? ar_error_get_error_code(error) : FAILED, world_anchor_error(error, successful));
 			});
 		});
 	}
@@ -1261,6 +1277,10 @@ uint64_t VisionOSSceneUnderstanding::submit_anchor_enumeration(bool p_internal) 
 	const uint64_t request = store->begin("enumerate", "", Transform3D(), false, p_internal);
 	if (request) {
 		visionos_tracking_access().perform([&] {
+			// Blocks created inside a [&] lambda would capture these by reference to this stack frame, and ARKit invokes them later.
+			const auto block_store = store;
+			const uint64_t block_generation = generation;
+			const uint64_t block_request = request;
 			ar_world_tracking_provider_copy_all_world_anchors(world_tracking_provider, ^(ar_world_anchors_t anchors) {
 				const double observed_at = CACurrentMediaTime();
 				__block std::vector<VisionOSWorldAnchorStore::Anchor> records;
@@ -1270,7 +1290,7 @@ uint64_t VisionOSSceneUnderstanding::submit_anchor_enumeration(bool p_internal) 
 						return records.size() <= VisionOSWorldAnchorStore::MAX_ANCHORS;
 					});
 				}
-				store->enumerated(generation, request, records, anchors != nullptr, observed_at);
+				block_store->enumerated(block_generation, block_request, records, anchors != nullptr, observed_at);
 			});
 		});
 	}
