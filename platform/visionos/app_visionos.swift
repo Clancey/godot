@@ -175,6 +175,7 @@ public final class SpatialEventObjC: NSObject {
 
 struct ImmersiveLauncher: View {
 	@Environment(\.openImmersiveSpace) private var openImmersiveSpace
+	@Environment(\.dismissWindow) private var dismissWindow
 	@Environment(\.scenePhase) private var scenePhase
 
 	private let model: Model = .shared
@@ -185,9 +186,9 @@ struct ImmersiveLauncher: View {
 		model.immersiveSpaceError = nil
 
 		// The preferred scene role may already be connecting the immersive scene.
-		// Do not enter the pending state without a request that can complete it.
+		// Do not enter the pending state without a request that can complete it;
+		// this window dismisses itself once that scene opens.
 		guard !GDTAppDelegateServiceVisionOS.hasImmersiveScene && model.renderer == nil else {
-			model.immersiveSpaceError = "An immersive scene is already connecting or closing. Please try again shortly."
 			NSLog("visionOS immersive space request deferred while a scene or renderer is still present")
 			return
 		}
@@ -242,6 +243,13 @@ struct ImmersiveLauncher: View {
 			if phase == .active && !model.didRequestImmersiveSpace {
 				model.didRequestImmersiveSpace = true
 				Task { await enterImmersiveSpace() }
+			}
+		}
+		.onChange(of: model.immersiveSpaceState, initial: true) { _, state in
+			// The launcher only exists to reach the immersive space; once it is
+			// open the window is redundant. The render loop reopens it on exit.
+			if state == .open {
+				dismissWindow(id: "GodotLauncher")
 			}
 		}
 	}
@@ -503,11 +511,17 @@ struct SwiftUIApp: App {
 					.ignoresSafeArea()
 			}
 		}
+		// With the immersive role preferred, the space is the launch scene. The
+		// launcher is only opened explicitly (after the render loop ends), and
+		// neither window is restored into a later launch.
+		.defaultLaunchBehavior(useCompositorServices ? .suppressed : .automatic)
+		.restorationBehavior(useCompositorServices ? .disabled : .automatic)
 		WindowGroup(id: "GodotStartupStatus", for: UUID.self) { $generation in
 			if let generation {
 				ImmersiveStartupStatus(generation: generation)
 			}
 		}
+		.restorationBehavior(.disabled)
 		.defaultSize(width: 420, height: 180)
 		.windowResizability(.contentSize)
 		.defaultWindowPlacement { _, _ in
