@@ -1,42 +1,48 @@
-#include "core/os/thread_safe.h"
-#include "servers/rendering/renderer_rd/pipeline_hash_map_rd.h"
 /**************************************************************************/
-/*  test_visionos_engine_thread.cpp                                        */
+/*  test_visionos_engine_thread.cpp                                       */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md).   */
-/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                     */
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
-/* Permission is hereby granted, free of charge, to any person obtaining   */
-/* a copy of this software and associated documentation files (the         */
-/* "Software"), to deal in the Software without restriction, including     */
-/* without limitation the rights to use, copy, modify, merge, publish,     */
-/* distribute, sublicense, and/or sell copies of the Software, and to      */
-/* permit persons to whom the Software is furnished to do so, subject to   */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
 /* the following conditions:                                              */
 /*                                                                        */
 /* The above copyright notice and this permission notice shall be         */
 /* included in all copies or substantial portions of the Software.        */
 /*                                                                        */
-/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,         */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
 /* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
 /* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
 /* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
-/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,    */
-/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE       */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+#include "core/os/thread_safe.h"
 #include "tests/test_macros.h"
 #include "tests/test_tools.h"
 
 #include "modules/visionos_xr/visionos_engine_thread.h"
 
+#ifdef RD_ENABLED
+#include "servers/rendering/renderer_rd/pipeline_hash_map_rd.h"
+#endif
+
 #include <atomic>
+#include <chrono>
 #include <future>
+// doctest only forward-declares std::ostream; stringifying std::thread::id needs the full definition.
+#include <ostream>
 #include <thread>
 
 TEST_FORCE_LINK(test_visionos_engine_thread)
@@ -45,6 +51,7 @@ namespace TestVisionOSEngineThread {
 
 using namespace std::chrono_literals;
 
+#ifdef RD_ENABLED
 struct StalledCompiler {
 	std::promise<void> entered;
 	std::promise<void> release;
@@ -101,6 +108,7 @@ TEST_CASE("[visionOS] A pipeline wait cannot occupy the UI caller or reorder lif
 	pipelines.clear_pipelines();
 	CHECK_FALSE(errors.has_error);
 }
+#endif // RD_ENABLED
 
 TEST_CASE("[visionOS] One native owner survives paused and replaced layers and rejects work after teardown") {
 	VisionOSEngineThread owner;

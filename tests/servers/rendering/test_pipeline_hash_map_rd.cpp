@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  test_pipeline_hash_map_rd.cpp                                          */
+/*  test_pipeline_hash_map_rd.cpp                                         */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -32,6 +32,8 @@
 
 TEST_FORCE_LINK(test_pipeline_hash_map_rd)
 
+#ifdef RD_ENABLED
+
 #include "servers/rendering/renderer_rd/pipeline_hash_map_rd.h"
 #include "tests/test_tools.h"
 
@@ -59,3 +61,5 @@ TEST_CASE("[PipelineHashMapRD] Failed compilation tasks are drained once") {
 }
 
 } // namespace TestPipelineHashMapRD
+
+#endif // RD_ENABLED

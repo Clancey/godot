@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  test_metal_shader_bindings.cpp                                         */
+/*  test_metal_shader_bindings.cpp                                        */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -37,8 +37,8 @@ TEST_FORCE_LINK(test_metal_shader_bindings)
 #if defined(METAL_ENABLED) && defined(MODULE_GLSLANG_ENABLED)
 
 #include "core/io/marshalls.h"
-#include "drivers/metal/rendering_shader_container_metal.h"
 #include "drivers/metal/rendering_context_driver_metal.h"
+#include "drivers/metal/rendering_shader_container_metal.h"
 #include "servers/rendering/rendering_device.h"
 
 #include "modules/glslang/shader_compile.h"
@@ -51,6 +51,11 @@ TEST_CASE("[Metal] Layered rasterization map supplies the logical framebuffer ex
 	RenderingDevice rd;
 	REQUIRE(rd.initialize(&context) == OK);
 	MTL::Device *device = context.get_metal_device();
+	if (String::utf8(device->name()->utf8String()).contains("Paravirtual")) {
+		// Virtualized macOS GPUs (e.g. CI runners) advertise layered rate maps but leave the attachments unwritten.
+		MESSAGE("Skipping: layered rasterization rate maps are not rendered by the paravirtual Metal device.");
+		return;
+	}
 	REQUIRE(device->supportsRasterizationRateMap(2));
 	float rates[] = { 0.35f, 0.55f, 0.35f };
 	auto layer = NS::TransferPtr(MTL::RasterizationRateLayerDescriptor::alloc()->init(MTL::Size(3, 3, 1), rates, rates));
@@ -104,7 +109,8 @@ void main() {
 	gl_Position = vec4(vertices[gl_VertexIndex], 0.5, 1);
 	eye = gl_ViewIndex;
 }
-)", RD::SHADER_LANGUAGE_VULKAN_VERSION_1_1, RD::SHADER_SPIRV_VERSION_1_3, &error);
+)",
+			RD::SHADER_LANGUAGE_VULKAN_VERSION_1_1, RD::SHADER_SPIRV_VERSION_1_3, &error);
 	REQUIRE_MESSAGE(error.is_empty(), error);
 	stages.write[1].shader_stage = RD::SHADER_STAGE_FRAGMENT;
 	stages.write[1].spirv = compile_glslang_shader(RD::SHADER_STAGE_FRAGMENT, R"(
@@ -112,7 +118,8 @@ void main() {
 layout(location = 0) flat in uint eye;
 layout(location = 0) out vec4 color;
 void main() { color = eye == 0 ? vec4(1,0,0,1) : vec4(0,1,0,1); }
-)", RD::SHADER_LANGUAGE_VULKAN_VERSION_1_1, RD::SHADER_SPIRV_VERSION_1_3, &error);
+)",
+			RD::SHADER_LANGUAGE_VULKAN_VERSION_1_1, RD::SHADER_SPIRV_VERSION_1_3, &error);
 	REQUIRE_MESSAGE(error.is_empty(), error);
 	RID shader = rd.shader_create_from_spirv(stages);
 	REQUIRE(shader.is_valid());
