@@ -1,0 +1,379 @@
+name: 🕶️ visionOS Release
+
+on:
+  push:
+    branches:
+      - visionos-4.8
+    tags:
+      - visionos-v*
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create (e.g. visionos-v4.8.dev.1). Leave empty to publish a rolling "visionos-latest" release.
+        type: string
+        required: false
+      prerelease:
+        description: Mark the release as a pre-release.
+        type: boolean
+        default: true
+
+concurrency:
+  group: visionos-release|${{ github.ref_name }}|${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  SCONS_FLAGS: >-
+    production=yes
+    module_text_server_fb_enabled=yes
+    tests=no
+    debug_symbols=no
+
+jobs:
+  # Resolve the release tag and the Godot version string once, so every job agrees.
+  metadata:
+    name: Resolve release metadata
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      godot-version: ${{ steps.meta.outputs.godot-version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Compute metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          godot_version=$(python3 -c '
+          import importlib.util, sys
+          spec = importlib.util.spec_from_file_location("version", "version.py")
+          v = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(v)
+          version = f"{v.major}.{v.minor}"
+          if v.patch:
+              version += f".{v.patch}"
+          sys.stdout.write(f"{version}.{v.status}")
+          ')
+          echo "godot-version=$godot_version" >> "$GITHUB_OUTPUT"
+
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+            prerelease=true
+          elif [ -n "${{ inputs.tag }}" ]; then
+            tag="${{ inputs.tag }}"
+            prerelease="${{ inputs.prerelease }}"
+          else
+            # Branch push or manual run without a tag: keep a single rolling release.
+            tag="visionos-latest"
+            prerelease=true
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "Releasing '$tag' for Godot $godot_version"
+
+  # visionOS export templates: device + simulator, debug + release, bundled into visionos.zip.
+  templates:
+    name: visionOS export templates
+    runs-on: macos-26
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: visionos-release-templates
+        continue-on-error: true
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: Verify visionOS SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          if ! xcrun --sdk xros --show-sdk-path > /dev/null 2>&1; then
+            echo "visionOS SDK missing, downloading platform..."
+            sudo xcodebuild -downloadPlatform visionOS
+          fi
+          echo "xros SDK: $(xcrun --sdk xros --show-sdk-path)"
+          echo "xrsimulator SDK: $(xcrun --sdk xrsimulator --show-sdk-path)"
+
+      - name: Compilation (device, template_debug)
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=arm64
+          platform: visionos
+          target: template_debug
+
+      - name: Compilation (device, template_release)
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=arm64
+          platform: visionos
+          target: template_release
+
+      - name: Compilation (simulator, template_debug)
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=arm64 simulator=yes
+          platform: visionos
+          target: template_debug
+
+      # The final build generates the Xcode project bundle from every library built above.
+      - name: Compilation (simulator, template_release) + bundle
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=arm64 simulator=yes generate_bundle=yes
+          platform: visionos
+          target: template_release
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: visionos-release-templates
+        continue-on-error: true
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -l bin/
+          # The editor resolves export templates by platform name, so the bundle must be `visionos.zip`.
+          mv bin/godot_visionos.zip visionos.zip
+          unzip -l visionos.zip | head -40
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: visionos-templates
+          path: visionos.zip
+          retention-days: 7
+          if-no-files-found: error
+
+  # macOS editor used to run `--export-release visionOS` in downstream app CI.
+  editor:
+    name: macOS editor (universal)
+    runs-on: macos-26
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: visionos-release-editor
+        continue-on-error: true
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: Download pre-built ANGLE
+        id: angle-sdk
+        shell: bash
+        run: |
+          if python ./misc/scripts/install_angle.py; then
+            echo "ANGLE_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::ANGLE SDK installation failed, building without ANGLE support."
+            echo "ANGLE_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download pre-built AccessKit
+        id: accesskit-sdk
+        shell: bash
+        run: |
+          if python3 ./misc/scripts/install_accesskit.py; then
+            echo "ACCESSKIT_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::AccessKit SDK installation failed, building without AccessKit support."
+            echo "ACCESSKIT_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Vulkan SDK
+        id: vulkan-sdk
+        shell: bash
+        run: |
+          if sh misc/scripts/install_vulkan_sdk_macos.sh; then
+            echo "VULKAN_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::macOS: Vulkan SDK installation failed, building without Vulkan support."
+            echo "VULKAN_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+        continue-on-error: true
+
+      - name: Compilation (x86_64)
+        uses: ./.github/actions/godot-build
+        with:
+          # Silence warning about Metal not being supported in x86_64 builds using `metal=no`.
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=x86_64 vulkan=${{ steps.vulkan-sdk.outputs.VULKAN_ENABLED }} accesskit=${{ steps.accesskit-sdk.outputs.ACCESSKIT_ENABLED }} angle=${{ steps.angle-sdk.outputs.ANGLE_ENABLED }} metal=no
+          platform: macos
+          target: editor
+
+      - name: Compilation (arm64)
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=arm64 vulkan=${{ steps.vulkan-sdk.outputs.VULKAN_ENABLED }} accesskit=${{ steps.accesskit-sdk.outputs.ACCESSKIT_ENABLED }} angle=${{ steps.angle-sdk.outputs.ANGLE_ENABLED }}
+          platform: macos
+          target: editor
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: visionos-release-editor
+        continue-on-error: true
+
+      - name: Package Godot.app
+        shell: bash
+        run: |
+          set -euo pipefail
+          lipo -create bin/godot.macos.editor.x86_64 bin/godot.macos.editor.arm64 -output bin/godot.macos.editor.universal
+          strip -x bin/godot.macos.editor.universal
+          chmod +x bin/godot.macos.editor.universal
+
+          cp -r misc/dist/macos_tools.app Godot.app
+          mkdir -p Godot.app/Contents/MacOS
+          cp bin/godot.macos.editor.universal Godot.app/Contents/MacOS/Godot
+          chmod +x Godot.app/Contents/MacOS/Godot
+
+          # Ad-hoc signature, enough for local and CI use; not notarized.
+          codesign --force --timestamp=none --options=runtime \
+            --entitlements misc/dist/macos/editor.entitlements -s - Godot.app
+
+          ditto -c -k --sequesterRsrc --keepParent Godot.app Godot_macos_editor.zip
+
+          # Headless binary for `godot --headless --export-release` in downstream CI.
+          cp bin/godot.macos.editor.universal godot.macos.editor.universal
+
+          ./godot.macos.editor.universal --headless --version
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-editor
+          path: |
+            Godot_macos_editor.zip
+            godot.macos.editor.universal
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    runs-on: ubuntu-24.04
+    needs: [metadata, templates, editor]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Assemble release assets
+        shell: bash
+        env:
+          GODOT_VERSION: ${{ needs.metadata.outputs.godot-version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp artifacts/visionos.zip release/visionos.zip
+          cp artifacts/Godot_macos_editor.zip release/Godot_macos_editor.zip
+          cp artifacts/godot.macos.editor.universal release/godot.macos.editor.universal
+
+          # A .tpz that the editor / downstream CI can install as a complete template set.
+          mkdir -p tpz/templates
+          cp release/visionos.zip tpz/templates/visionos.zip
+          echo "$GODOT_VERSION" > tpz/templates/version.txt
+          (cd tpz && zip -r ../release/godot_visionos_export_templates.tpz templates)
+
+          (cd release && shasum -a 256 * > SHA256SUMS.txt)
+          ls -l release
+
+      - name: Write release notes
+        shell: bash
+        env:
+          GODOT_VERSION: ${{ needs.metadata.outputs.godot-version }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          cat > notes.md <<EOF
+          visionOS build of Godot \`$GODOT_VERSION\` from \`${{ github.ref_name }}\` (\`${{ github.sha }}\`).
+
+          ## Assets
+
+          | Asset | Use |
+          | --- | --- |
+          | \`visionos.zip\` | visionOS export template. Drop into the editor's export templates directory. |
+          | \`godot_visionos_export_templates.tpz\` | Same template, packaged as an installable \`.tpz\`. |
+          | \`Godot_macos_editor.zip\` | macOS editor app bundle (universal, ad-hoc signed). |
+          | \`godot.macos.editor.universal\` | Bare macOS editor binary for headless exports. |
+          | \`SHA256SUMS.txt\` | Checksums for every asset above. |
+
+          ## Use from another repository's CI
+
+          \`\`\`yaml
+          - name: Install Godot (visionOS)
+            env:
+              GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+            run: |
+              gh release download "$TAG" --repo ${{ github.repository }} \\
+                --pattern 'godot.macos.editor.universal' --pattern 'visionos.zip' --clobber
+              chmod +x godot.macos.editor.universal
+              sudo mv godot.macos.editor.universal /usr/local/bin/godot
+
+              TEMPLATES="\$HOME/Library/Application Support/Godot/export_templates/$GODOT_VERSION"
+              mkdir -p "\$TEMPLATES"
+              mv visionos.zip "\$TEMPLATES/visionos.zip"
+
+          - name: Export
+            run: godot --headless --export-release "visionOS" build/App.xcodeproj
+          \`\`\`
+
+          > The editor bundle is ad-hoc signed and **not** notarized. On a developer Mac run
+          > \`xattr -dr com.apple.quarantine Godot.app\` after unzipping.
+          EOF
+          cat notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags=(--title "Godot visionOS ${{ needs.metadata.outputs.godot-version }} ($TAG)" --notes-file notes.md --target "${{ github.sha }}")
+          if [ "$PRERELEASE" = "true" ]; then
+            flags+=(--prerelease)
+          fi
+
+          if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            if [ "$TAG" = "visionos-latest" ]; then
+              # Rolling release: drop the old one so the tag re-points at this commit.
+              gh release delete "$TAG" --repo "${{ github.repository }}" --yes --cleanup-tag
+            else
+              # Versioned tag already published: refresh its assets in place.
+              gh release upload "$TAG" --repo "${{ github.repository }}" --clobber release/*
+              exit 0
+            fi
+          fi
+
+          gh release create "$TAG" --repo "${{ github.repository }}" "${flags[@]}" release/*
