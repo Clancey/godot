@@ -3,7 +3,7 @@ name: 🕶️ visionOS Release
 on:
   push:
     branches:
-      - visionos-4.8
+      - visionos-4.8-rebased
     tags:
       - visionos-v*
   workflow_dispatch:
