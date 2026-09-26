@@ -314,6 +314,10 @@ jobs:
           GODOT_VERSION: ${{ needs.metadata.outputs.godot-version }}
           TAG: ${{ needs.metadata.outputs.tag }}
         run: |
+          # Actions expands every dollar-double-brace expression in this script before bash runs, even
+          # when backslash-escaped, which previously leaked a live token into the notes. Build the
+          # literal from pieces so the raw workflow text never contains that sequence where it's printed.
+          EXPR_OPEN='$''{{'
           cat > notes.md <<EOF
           visionOS build of Godot \`$GODOT_VERSION\` from \`${{ github.ref_name }}\` (\`${{ github.sha }}\`).
 
@@ -332,7 +336,7 @@ jobs:
           \`\`\`yaml
           - name: Install Godot (visionOS)
             env:
-              GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+              GH_TOKEN: ${EXPR_OPEN} secrets.GITHUB_TOKEN }}
             run: |
               gh release download "$TAG" --repo ${{ github.repository }} \\
                 --pattern 'godot.macos.editor.universal' --pattern 'visionos.zip' --clobber
@@ -350,6 +354,11 @@ jobs:
           > The editor bundle is ad-hoc signed and **not** notarized. On a developer Mac run
           > \`xattr -dr com.apple.quarantine Godot.app\` after unzipping.
           EOF
+
+          if grep -qE 'gh[pousr]_[A-Za-z0-9]{16,}|github_pat_' notes.md; then
+            echo "::error::Release notes contain what looks like a GitHub token; refusing to publish."
+            exit 1
+          fi
           cat notes.md
 
       - name: Publish
