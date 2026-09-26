@@ -217,6 +217,7 @@ private:
 #ifndef DISABLE_DEPRECATED
 		Transform3D get_transform_for_view(uint32_t p_view, const Transform3D &p_cam_transform);
 		Projection get_projection_for_view(uint32_t p_view, double p_aspect, double p_z_near, double p_z_far);
+		bool has_scene_output() const { return scene_output != nullptr; }
 #endif
 		Rect2i get_render_region();
 
@@ -302,6 +303,7 @@ public:
 	virtual void process() override;
 	virtual Size2 get_render_target_size() override;
 	virtual TypedArray<Projection> get_camera_projections(const StringName &p_tracker_name, double p_aspect, double p_z_near, double p_z_far) override;
+	TypedArray<Projection> build_camera_projections(float p_world_scale) const;
 	virtual TypedArray<Transform3D> get_camera_offsets(const StringName &p_tracker_name) override;
 
 	// Methods only called from the render thread
@@ -316,7 +318,13 @@ public:
 		return rt.get_transform_for_view(p_view, p_cam_transform);
 	}
 	virtual Projection get_projection_for_view(uint32_t p_view, double p_aspect, double p_z_near, double p_z_far) override {
-		return rt.get_projection_for_view(p_view, p_aspect, p_z_near, p_z_far);
+		if (rt.has_scene_output()) {
+			return rt.get_projection_for_view(p_view, p_aspect, p_z_near, p_z_far);
+		}
+		// Outside a render (e.g. XRCamera3D frustum queries from scripts), answer from the geometry the engine is posed with.
+		XRServer *xr_server = XRServer::get_singleton();
+		TypedArray<Projection> projections = build_camera_projections(xr_server ? xr_server->get_world_scale() : 1.0f);
+		return p_view < (uint32_t)projections.size() ? Projection(projections[p_view]) : Projection();
 	}
 #endif
 	virtual Rect2i get_render_region() override {
