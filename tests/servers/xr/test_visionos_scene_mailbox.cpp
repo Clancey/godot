@@ -51,6 +51,8 @@
 
 TEST_FORCE_LINK(test_visionos_scene_mailbox)
 
+#ifndef _3D_DISABLED
+
 namespace TestVisionOSSceneMailbox {
 
 using namespace std::chrono_literals;
@@ -1025,3 +1027,5 @@ TEST_CASE("[visionOS] Independent compositor progresses through 30s initializati
 }
 
 } // namespace TestVisionOSSceneMailbox
+
+#endif // _3D_DISABLED
