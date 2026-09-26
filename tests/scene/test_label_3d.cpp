@@ -1,30 +1,30 @@
 /**************************************************************************/
-/*  test_label_3d.cpp                                                      */
+/*  test_label_3d.cpp                                                     */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md).   */
-/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                    */
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
-/* Permission is hereby granted, free of charge, to any person obtaining   */
-/* a copy of this software and associated documentation files (the         */
-/* "Software"), to deal in the Software without restriction, including     */
-/* without limitation the rights to use, copy, modify, merge, publish,      */
-/* distribute, sublicense, and/or sell copies of the Software, and to       */
-/* permit persons to whom the Software is furnished to do so, subject to    */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
 /* the following conditions:                                              */
 /*                                                                        */
 /* The above copyright notice and this permission notice shall be         */
 /* included in all copies or substantial portions of the Software.        */
 /*                                                                        */
-/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,         */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
 /* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
 /* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
 /* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
-/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,    */
-/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE       */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
@@ -284,7 +284,7 @@ TEST_CASE("[SceneTree][Label3D] Depth comparison enum values survive text and bi
 			material->set_depth_draw_mode(BaseMaterial3D::DEPTH_DRAW_ALWAYS);
 			material->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA);
 			material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, no_depth);
-			for (const String &extension : { "tres", "res" }) {
+			for (const char *extension : { "tres", "res" }) {
 				const String path = TestUtils::get_temp_path(vformat("foreground_depth_%d_%d.%s", comparison, int(no_depth), extension));
 				const Error save_error = ResourceSaver::save(material, path);
 				CHECK(save_error == OK);
