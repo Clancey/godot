@@ -49,6 +49,17 @@ inline Transform3D visionos_hand_aim_pose(const Ref<XRHandTracker> &p_hand) {
 	return Transform3D(aim_basis, palm.origin);
 }
 
+inline Transform3D visionos_hand_grip_pose(const Ref<XRHandTracker> &p_hand) {
+	const Transform3D aim = visionos_hand_aim_pose(p_hand);
+	// OpenXR grip and palm poses keep -Z forward but put +Y toward the thumb
+	// and +X on the palm normal: dorsal for the right hand, palmar for the left.
+	const Vector3 dorsal = aim.basis.get_column(1);
+	const Vector3 across = aim.basis.get_column(0);
+	const bool left = p_hand->get_tracker_hand() == XRPositionalTracker::TRACKER_HAND_LEFT;
+	const Basis grip_basis = left ? Basis(-dorsal, across, aim.basis.get_column(2)) : Basis(dorsal, -across, aim.basis.get_column(2));
+	return Transform3D(grip_basis, aim.origin);
+}
+
 // Shared by every presenter using the same tracking session, including a
 // retiring layer. Only predictor transactions and session reconfiguration
 // take this lock, never engine iteration or rendering work.
