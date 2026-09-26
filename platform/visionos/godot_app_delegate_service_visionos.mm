@@ -266,6 +266,12 @@ static bool is_immersive_scene(UIScene *scene) {
 	[super sceneDidEnterBackground:scene];
 }
 
+// The visionOS 26 SDK deprecates these UIApplication lifecycle callbacks in favor of the
+// UIScene equivalents, which are overridden above. They are still implemented here so the
+// legacy (non-Compositor Services) path keeps forwarding to the base delegate.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 - (void)applicationWillEnterForeground:(UIApplication *)application {
 	if (_renderMode == GDTRenderModeCompositorServices) {
 		visionos_dispatch_to_engine(^{
@@ -303,6 +309,8 @@ static bool is_immersive_scene(UIScene *scene) {
 	}
 	[super applicationDidEnterBackground:application];
 }
+
+#pragma clang diagnostic pop
 
 - (void)applicationDidReceiveMemoryWarning:(UIApplication *)application {
 	if (_renderMode == GDTRenderModeCompositorServices) {

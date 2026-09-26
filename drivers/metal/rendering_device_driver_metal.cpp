@@ -28,8 +28,6 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#pragma once
-
 /**************************************************************************/
 /*                                                                        */
 /* Portions of this code were derived from MoltenVK.                      */
@@ -261,7 +259,7 @@ bool RenderingDeviceDriverMetal::is_valid_linear(const TextureFormat &p_format) 
 // Simulator Metal validation rejects a texture that carries both a non-identity swizzle
 // and shader-write usage:
 //
-//     Texture swizzling is not compatable with MTLTextureUsageShaderWrite
+//     Texture swizzling is not compatible with MTLTextureUsageShaderWrite
 //
 // The swizzle is dropped rather than the write usage. A texture that cannot be written
 // breaks any compute shader targeting it, whereas losing the swizzle only changes how its
