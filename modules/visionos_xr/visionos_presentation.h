@@ -39,10 +39,19 @@
 #import <ARKit/ARKit.h>
 #import <CompositorServices/CompositorServices.h>
 #import <Metal/Metal.h>
+#include <TargetConditionals.h>
 
 #include <atomic>
 #include <memory>
 #include <mutex>
+
+// Views Godot renders. The simulator's compositor presents one view and its GPU
+// (Apple2 family) has no layered rendering, so it renders mono.
+#if TARGET_OS_SIMULATOR
+static constexpr uint32_t VISIONOS_RENDER_VIEW_COUNT = 1;
+#else
+static constexpr uint32_t VISIONOS_RENDER_VIEW_COUNT = 2;
+#endif
 #include <thread>
 #include <vector>
 

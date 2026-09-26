@@ -253,7 +253,7 @@ id<MTLTexture> make_target(id<MTLDevice> p_device, NSUInteger p_width, NSUIntege
 	descriptor.pixelFormat = p_format;
 	descriptor.width = p_width;
 	descriptor.height = p_height;
-	descriptor.arrayLength = 2;
+	descriptor.arrayLength = VISIONOS_RENDER_VIEW_COUNT;
 	descriptor.storageMode = MTLStorageModePrivate;
 	descriptor.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
 	return [p_device newTextureWithDescriptor:descriptor];
@@ -354,13 +354,13 @@ VisionOSPresentation::Lease VisionOSPresentation::acquire(const std::shared_ptr<
 		descriptor.width = pyramid_shape.width;
 		descriptor.height = pyramid_shape.height;
 		descriptor.mipmapLevelCount = pyramid_shape.levels;
-		descriptor.arrayLength = 2;
+		descriptor.arrayLength = VISIONOS_RENDER_VIEW_COUNT;
 		descriptor.storageMode = MTLStorageModePrivate;
 		descriptor.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite | MTLTextureUsagePixelFormatView;
 		output.depth_pyramid = [device newTextureWithDescriptor:descriptor];
 		NSMutableArray<id<MTLTexture>> *views = [NSMutableArray array];
 		for (uint32_t level = 0; level < pyramid_shape.levels; level++) {
-			id<MTLTexture> view = [output.depth_pyramid newTextureViewWithPixelFormat:MTLPixelFormatR32Float textureType:MTLTextureType2DArray levels:NSMakeRange(level, 1) slices:NSMakeRange(0, 2)];
+			id<MTLTexture> view = [output.depth_pyramid newTextureViewWithPixelFormat:MTLPixelFormatR32Float textureType:MTLTextureType2DArray levels:NSMakeRange(level, 1) slices:NSMakeRange(0, VISIONOS_RENDER_VIEW_COUNT)];
 			if (!view) {
 				break;
 			}
@@ -426,12 +426,12 @@ bool VisionOSPresentation::encode_depth_pyramid(const VisionOSSceneOutput &p_out
 			[encoder setTexture:p_output.depth atIndex:0];
 			[encoder setBytes:p_output.geometry->physical_bounds length:sizeof(p_output.geometry->physical_bounds) atIndex:0];
 			[encoder setTexture:target atIndex:1];
-			[encoder dispatchThreadgroups:MTLSizeMake(target.width, target.height, 2) threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
+			[encoder dispatchThreadgroups:MTLSizeMake(target.width, target.height, VISIONOS_RENDER_VIEW_COUNT) threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
 		} else {
 			[encoder setComputePipelineState:depth_mip_pipeline];
 			[encoder setTexture:p_output.depth_pyramid_views[level - 1] atIndex:0];
 			[encoder setTexture:target atIndex:1];
-			[encoder dispatchThreadgroups:MTLSizeMake((target.width + 7) / 8, (target.height + 7) / 8, 2) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+			[encoder dispatchThreadgroups:MTLSizeMake((target.width + 7) / 8, (target.height + 7) / 8, VISIONOS_RENDER_VIEW_COUNT) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
 		}
 		[encoder endEncoding];
 	}
@@ -505,9 +505,11 @@ void VisionOSPresentation::present() {
 	}
 	id<MTLTexture> color = cp_drawable_get_color_texture(drawable, 0);
 	id<MTLTexture> depth = cp_drawable_get_depth_texture(drawable, 0);
-	if (!color || !depth || color.textureType != MTLTextureType2DArray || color.arrayLength != 2 ||
-			cp_drawable_get_view_count(drawable) != 2) {
-		NSLog(@"visionOS compositor requires complete layered stereo targets.");
+	// The device is layered stereo; the visionOS simulator presents one layered view.
+	const size_t drawable_views = cp_drawable_get_view_count(drawable);
+	if (!color || !depth || color.textureType != MTLTextureType2DArray || (drawable_views != 1 && drawable_views != 2) ||
+			color.arrayLength != drawable_views) {
+		NSLog(@"visionOS compositor requires complete layered targets (color=%d depth=%d type=%d layers=%d views=%d).", color != nil, depth != nil, color ? (int)color.textureType : -1, color ? (int)color.arrayLength : -1, (int)drawable_views);
 		presenter.get_completions()->startup.fail();
 		frame.finish();
 		stop();
@@ -538,21 +540,23 @@ void VisionOSPresentation::present() {
 		}
 		cp_drawable_set_depth_range(drawable, snapshot->depth_range);
 		for (uint32_t eye = 0; eye < 2; eye++) {
-			cp_view_t view = cp_drawable_get_view(drawable, eye);
+			// Godot always renders stereo; with a mono drawable both eyes render its single view.
+			const uint32_t view_index = MIN(eye, uint32_t(drawable_views - 1));
+			cp_view_t view = cp_drawable_get_view(drawable, view_index);
 			cp_view_texture_map_t map = cp_view_get_view_texture_map(view);
 			snapshot->viewport[eye] = cp_view_texture_map_get_viewport(map);
 			const MTLViewport &viewport = snapshot->viewport[eye];
 			MTLCoordinate2D low = { float(viewport.originX), float(viewport.originY) };
 			MTLCoordinate2D high = { float(viewport.originX + viewport.width), float(viewport.originY + viewport.height) };
 			if (snapshot->rate_map) {
-				low = [snapshot->rate_map mapScreenToPhysicalCoordinates:low forLayer:eye];
-				high = [snapshot->rate_map mapScreenToPhysicalCoordinates:high forLayer:eye];
+				low = [snapshot->rate_map mapScreenToPhysicalCoordinates:low forLayer:view_index];
+				high = [snapshot->rate_map mapScreenToPhysicalCoordinates:high forLayer:view_index];
 			}
 			snapshot->physical_bounds[eye] = visionos_scene_physical_bounds(simd_make_float2(low.x, low.y), simd_make_float2(high.x, high.y), snapshot->width, snapshot->height);
 			snapshot->head_from_eye[eye] = cp_view_get_transform(view);
 			acquired_eyes[eye] = snapshot->head_from_eye[eye];
-			snapshot->projection[eye] = cp_drawable_compute_projection(drawable, cp_axis_direction_convention_right_up_forward, eye);
-			if (cp_view_texture_map_get_texture_index(map) != 0 || cp_view_texture_map_get_slice_index(map) != eye) {
+			snapshot->projection[eye] = cp_drawable_compute_projection(drawable, cp_axis_direction_convention_right_up_forward, view_index);
+			if (cp_view_texture_map_get_texture_index(map) != 0 || cp_view_texture_map_get_slice_index(map) != view_index) {
 				NSLog(@"visionOS compositor returned an unsupported stereo texture mapping.");
 				presenter.get_completions()->startup.fail();
 				frame.finish();
@@ -740,7 +744,8 @@ bool VisionOSPresentation::transfer(cp_drawable_t p_drawable, id<MTLCommandBuffe
 	VisionOSSceneTransferParameters parameters[2] = {};
 	MTLViewport viewports[2] = {};
 	bool compatible = p_output != nullptr;
-	for (uint32_t eye = 0; eye < 2; eye++) {
+	const uint32_t drawable_views = MIN(uint32_t(cp_drawable_get_view_count(p_drawable)), VISIONOS_RENDER_VIEW_COUNT);
+	for (uint32_t eye = 0; eye < drawable_views; eye++) {
 		cp_view_t view = cp_drawable_get_view(p_drawable, eye);
 		viewports[eye] = cp_view_texture_map_get_viewport(cp_view_get_view_texture_map(view));
 		if (p_output) {
@@ -780,7 +785,7 @@ bool VisionOSPresentation::transfer(cp_drawable_t p_drawable, id<MTLCommandBuffe
 	pass.depthAttachment.loadAction = MTLLoadActionClear;
 	pass.depthAttachment.clearDepth = 0;
 	pass.depthAttachment.storeAction = MTLStoreActionStore;
-	pass.renderTargetArrayLength = 2;
+	pass.renderTargetArrayLength = drawable_views;
 	if (cp_drawable_get_rasterization_rate_map_count(p_drawable)) {
 		pass.rasterizationRateMap = cp_drawable_get_rasterization_rate_map(p_drawable, 0);
 		pass.renderTargetWidth = pass.rasterizationRateMap.screenSize.width;
@@ -793,7 +798,7 @@ bool VisionOSPresentation::transfer(cp_drawable_t p_drawable, id<MTLCommandBuffe
 	if (compatible) {
 		[encoder setRenderPipelineState:transfer_pipeline];
 		[encoder setDepthStencilState:transfer_depth];
-		[encoder setViewports:viewports count:2];
+		[encoder setViewports:viewports count:drawable_views];
 		[encoder setFragmentBytes:parameters length:sizeof(parameters) atIndex:0];
 		// The shader does not dereference the rate-data argument when VRS is off.
 		if (p_output->rate_parameters) {
@@ -805,7 +810,7 @@ bool VisionOSPresentation::transfer(cp_drawable_t p_drawable, id<MTLCommandBuffe
 		[encoder setFragmentTexture:p_output->color atIndex:0];
 		[encoder setFragmentTexture:p_output->depth atIndex:1];
 		[encoder setFragmentTexture:p_output->depth_pyramid atIndex:2];
-		[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3 instanceCount:2];
+		[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3 instanceCount:drawable_views];
 		r_scene = true;
 	}
 	cp_drawable_render_context_end_encoding(context, encoder);
