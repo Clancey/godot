@@ -2926,6 +2926,8 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 	// visionOS settings
 	GLOBAL_DEF_BASIC("xr/visionos/enable_hand_tracking", false);
 	GLOBAL_DEF_BASIC("xr/visionos/enable_controller_tracking", false);
+	GLOBAL_DEF_BASIC("xr/visionos/enable_face_tracking", false);
+	GLOBAL_DEF("xr/visionos/face_tracking_mirrored", false);
 	// Scene understanding. These require the world sensing authorization.
 	GLOBAL_DEF_BASIC("xr/visionos/scene_understanding/enable_plane_detection", false);
 	GLOBAL_DEF_BASIC("xr/visionos/scene_understanding/enable_scene_reconstruction", false);

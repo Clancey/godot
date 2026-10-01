@@ -197,6 +197,8 @@ bool VisionOSXRInterface::initialize() {
 	cs.enabled = (app_delegate_render_mode == GDTRenderModeCompositorServices);
 	hands.enabled = GLOBAL_GET("xr/visionos/enable_hand_tracking");
 	controllers.enabled = GLOBAL_GET("xr/visionos/enable_controller_tracking");
+	face.enabled = GLOBAL_GET("xr/visionos/enable_face_tracking");
+	face.mirrored = GLOBAL_GET("xr/visionos/face_tracking_mirrored");
 	scene_understanding.configure_from_project_settings();
 
 	// ARKit session
@@ -243,6 +245,10 @@ bool VisionOSXRInterface::initialize() {
 
 	spatial_events.initialize(xr_server);
 
+	if (face.enabled) {
+		face.initialize(xr_server);
+	}
+
 	// Running the ARKit session for head tracking, at first
 	run_ar_session();
 
@@ -256,7 +262,7 @@ bool VisionOSXRInterface::initialize() {
 	// Apply the passthrough transparency implied by the initial immersion style.
 	update_transparent_background(get_environment_blend_mode() == XR_ENV_BLEND_MODE_ALPHA_BLEND);
 
-	print_verbose(String("VisionOSXRInterface initialized with:") + " compositorservices=" + (cs.enabled ? "yes" : "no") + " hands=" + (hands.enabled ? "yes" : "no") + " controllers=" + (controllers.enabled ? "yes" : "no") + " scene_understanding=" + (scene_understanding.enabled() ? "yes" : "no"));
+	print_verbose(String("VisionOSXRInterface initialized with:") + " compositorservices=" + (cs.enabled ? "yes" : "no") + " hands=" + (hands.enabled ? "yes" : "no") + " controllers=" + (controllers.enabled ? "yes" : "no") + " scene_understanding=" + (scene_understanding.enabled() ? "yes" : "no") + " face=" + (face.enabled ? "yes" : "no"));
 
 	return initialized;
 }
@@ -327,6 +333,10 @@ void VisionOSXRInterface::uninitialize() {
 		}
 
 		spatial_events.uninitialize(xr_server);
+
+		if (face.enabled) {
+			face.uninitialize(xr_server);
+		}
 
 		initialized = false;
 	}
@@ -732,6 +742,9 @@ void VisionOSXRInterface::process() {
 	}
 	if (!initialized) {
 		return;
+	}
+	if (face.enabled) {
+		face.process();
 	}
 
 	if (cs.enabled) {
