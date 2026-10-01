@@ -34,6 +34,7 @@
 
 #include "visionos_controller_tracking.h"
 #include "visionos_definitions.h"
+#include "visionos_face_tracking.h"
 #include "visionos_hand_tracking.h"
 #include "visionos_presentation_thread.h"
 #include "visionos_scene_understanding.h"
@@ -150,6 +151,9 @@ private:
 
 	// Pinching events
 	VisionOSSpatialEventTracking spatial_events;
+
+	// Face weights estimated from the Persona camera
+	VisionOSFaceTracking face;
 
 	// Data and functions only accessible from the rendering thread
 	class RenderThread : public Object {
