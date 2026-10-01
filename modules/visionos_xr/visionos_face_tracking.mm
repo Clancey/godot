@@ -39,6 +39,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 #import <Vision/Vision.h>
+#include <dlfcn.h>
 
 #include <algorithm>
 #include <cmath>
@@ -129,6 +130,13 @@ struct Measurements {
 
 @end
 
+// Vision is loaded at runtime rather than linked, so apps that leave face
+// tracking off don't need the framework in their Xcode project.
+static Class face_vision_class(NSString *p_name) {
+	static void *vision = dlopen("/System/Library/Frameworks/Vision.framework/Vision", RTLD_LAZY);
+	return vision ? NSClassFromString(p_name) : nil;
+}
+
 @implementation GDTVisionOSFaceCapture
 
 - (instancetype)initWithShared:(std::shared_ptr<VisionOSFaceTracking::Shared>)p_shared mirrored:(BOOL)p_mirrored {
@@ -138,7 +146,7 @@ struct Measurements {
 		mirrored = p_mirrored;
 		session_queue = dispatch_queue_create("org.godotengine.visionos.face.session", DISPATCH_QUEUE_SERIAL);
 		video_queue = dispatch_queue_create("org.godotengine.visionos.face.video", DISPATCH_QUEUE_SERIAL);
-		request = [[VNDetectFaceLandmarksRequest alloc] init];
+		request = [[face_vision_class(@"VNDetectFaceLandmarksRequest") alloc] init];
 		observers = [NSMutableArray array];
 		for (int i = 0; i < XRFaceTracker::FT_MAX; i++) {
 			smoothed[i] = 0.0f;
@@ -148,6 +156,10 @@ struct Measurements {
 }
 
 - (void)start {
+	if (request == nil) {
+		print_line("[visionos face] the Vision framework is unavailable");
+		return;
+	}
 	AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
 	print_line(vformat("[visionos face] camera authorization status %d", (int)status));
 	__weak GDTVisionOSFaceCapture *weak_self = self;
@@ -371,7 +383,7 @@ static bool measure(VNFaceObservation *p_face, CGSize p_size, Measurements &r_ou
 		print_line(vformat("[visionos face] first camera frame %dx%d", (int)size.width, (int)size.height));
 	}
 
-	VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCVPixelBuffer:pixels orientation:kCGImagePropertyOrientationUp options:@{}];
+	VNImageRequestHandler *handler = [[face_vision_class(@"VNImageRequestHandler") alloc] initWithCVPixelBuffer:pixels orientation:kCGImagePropertyOrientationUp options:@{}];
 	NSError *error = nil;
 	if (![handler performRequests:@[ request ] error:&error]) {
 		return;
