@@ -818,6 +818,11 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # The Android Gradle project resolves the `scons` executable while configuring, even though
+      # the native libraries are prebuilt by `android-libs`.
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
       - name: Download native libraries
         uses: actions/download-artifact@v8
         with:
