@@ -271,10 +271,596 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  # ---------------------------------------------------------------------------------------------
+  # Export templates for every other platform, so `godot_export_templates.tpz` is a complete set
+  # built from the same commit as the editor. Final files are uploaded as `tpl-*` artifacts using
+  # the standard Godot export template file names; intermediate build outputs use `build-*`.
+  # ---------------------------------------------------------------------------------------------
+
+  # iOS export template: device arm64, debug + release, bundled into ios.zip (Xcode project).
+  ios-templates:
+    name: iOS export templates
+    runs-on: macos-26
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: visionos-release-ios-templates
+        continue-on-error: true
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      # Provides MoltenVK.xcframework, which the iOS bundle ships and the exported Xcode project links.
+      - name: Setup Vulkan SDK
+        shell: bash
+        run: |
+          if ! sh misc/scripts/install_vulkan_sdk_macos.sh; then
+            echo "::warning::iOS: Vulkan SDK installation failed, the bundle will not include MoltenVK."
+          fi
+        continue-on-error: true
+
+      - name: Compilation (template_debug)
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=arm64
+          platform: ios
+          target: template_debug
+
+      # The final build generates the Xcode project bundle from every library built above.
+      - name: Compilation (template_release) + bundle
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=arm64 generate_bundle=yes
+          platform: ios
+          target: template_release
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: visionos-release-ios-templates
+        continue-on-error: true
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          mv bin/godot_ios.zip out/ios.zip
+          unzip -l out/ios.zip | grep -E 'libgodot\.a|MoltenVK|godot_apple_embedded.xcodeproj/project.pbxproj'
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: tpl-ios
+          path: out/*
+          retention-days: 7
+          if-no-files-found: error
+
+  # macOS export template binaries, one job per architecture; bundled by `macos-templates`.
+  macos-templates-build:
+    name: macOS export templates (${{ matrix.arch }})
+    runs-on: macos-26
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Silence warning about Metal not being supported in x86_64 builds using `metal=no`.
+          - arch: x86_64
+            extra-flags: metal=no
+          - arch: arm64
+            extra-flags: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: visionos-release-macos-templates-${{ matrix.arch }}
+        continue-on-error: true
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: Download pre-built ANGLE
+        id: angle-sdk
+        shell: bash
+        run: |
+          if python ./misc/scripts/install_angle.py; then
+            echo "ANGLE_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::ANGLE SDK installation failed, building without ANGLE support."
+            echo "ANGLE_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download pre-built AccessKit
+        id: accesskit-sdk
+        shell: bash
+        run: |
+          if python3 ./misc/scripts/install_accesskit.py; then
+            echo "ACCESSKIT_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::AccessKit SDK installation failed, building without AccessKit support."
+            echo "ACCESSKIT_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Vulkan SDK
+        id: vulkan-sdk
+        shell: bash
+        run: |
+          if sh misc/scripts/install_vulkan_sdk_macos.sh; then
+            echo "VULKAN_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::macOS: Vulkan SDK installation failed, building without Vulkan support."
+            echo "VULKAN_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+        continue-on-error: true
+
+      - name: Compilation (template_debug)
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=${{ matrix.arch }} ${{ matrix.extra-flags }} vulkan=${{ steps.vulkan-sdk.outputs.VULKAN_ENABLED }} accesskit=${{ steps.accesskit-sdk.outputs.ACCESSKIT_ENABLED }} angle=${{ steps.angle-sdk.outputs.ANGLE_ENABLED }}
+          platform: macos
+          target: template_debug
+
+      - name: Compilation (template_release)
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=${{ matrix.arch }} ${{ matrix.extra-flags }} vulkan=${{ steps.vulkan-sdk.outputs.VULKAN_ENABLED }} accesskit=${{ steps.accesskit-sdk.outputs.ACCESSKIT_ENABLED }} angle=${{ steps.angle-sdk.outputs.ANGLE_ENABLED }}
+          platform: macos
+          target: template_release
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: visionos-release-macos-templates-${{ matrix.arch }}
+        continue-on-error: true
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp bin/godot.macos.template_debug.${{ matrix.arch }} bin/godot.macos.template_release.${{ matrix.arch }} out/
+          ls -l out
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-macos-templates-${{ matrix.arch }}
+          path: out/*
+          retention-days: 1
+          if-no-files-found: error
+
+  # Universal macos.zip (macos_template.app), assembled like `generate_bundle=yes` does for templates.
+  macos-templates:
+    name: macOS export templates (universal bundle)
+    runs-on: macos-26
+    needs: [macos-templates-build]
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download template binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: build-macos-templates-*
+          path: bin
+          merge-multiple: true
+
+      - name: Bundle macos_template.app
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -l bin
+          cp -R misc/dist/macos_template.app bin/macos_template.app
+          mkdir -p bin/macos_template.app/Contents/MacOS
+          for target in debug release; do
+            out="bin/macos_template.app/Contents/MacOS/godot_macos_${target}.universal"
+            lipo -create "bin/godot.macos.template_${target}.x86_64" "bin/godot.macos.template_${target}.arm64" -output "$out"
+            chmod +x "$out"
+            lipo -info "$out"
+          done
+          mkdir -p out
+          (cd bin && zip -q -r -y ../out/macos.zip macos_template.app)
+          unzip -l out/macos.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: tpl-macos
+          path: out/*
+          retention-days: 7
+          if-no-files-found: error
+
+  linux-templates:
+    name: Linux export template (${{ matrix.arch }}, ${{ matrix.target }})
+    # Stay one LTS before latest (same as linux_builds.yml) to keep the glibc requirement low.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, target: template_debug, name: linux_debug.x86_64, runner: ubuntu-22.04, python-arch: x64 }
+          - { arch: x86_64, target: template_release, name: linux_release.x86_64, runner: ubuntu-22.04, python-arch: x64 }
+          - { arch: arm64, target: template_debug, name: linux_debug.arm64, runner: ubuntu-22.04-arm, python-arch: arm64 }
+          - { arch: arm64, target: template_release, name: linux_release.arm64, runner: ubuntu-22.04-arm, python-arch: arm64 }
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Setup dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libwayland-bin
+
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: visionos-release-linux-${{ matrix.arch }}-${{ matrix.target }}
+        continue-on-error: true
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+        with:
+          python-arch: ${{ matrix.python-arch }}
+
+      - name: Download pre-built AccessKit
+        shell: sh
+        id: accesskit-sdk
+        run: |
+          if python ./misc/scripts/install_accesskit.py; then
+            echo "ACCESSKIT_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::AccessKit SDK installation failed, building without AccessKit support."
+            echo "ACCESSKIT_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compilation
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=${{ matrix.arch }} accesskit=${{ steps.accesskit-sdk.outputs.ACCESSKIT_ENABLED }}
+          platform: linuxbsd
+          target: ${{ matrix.target }}
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: visionos-release-linux-${{ matrix.arch }}-${{ matrix.target }}
+        continue-on-error: true
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp bin/godot.linuxbsd.${{ matrix.target }}.${{ matrix.arch }} out/${{ matrix.name }}
+          strip out/${{ matrix.name }}
+          chmod +x out/${{ matrix.name }}
+          file out/${{ matrix.name }}
+          ./out/${{ matrix.name }} --headless --version || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: tpl-linux-${{ matrix.arch }}-${{ matrix.target }}
+          path: out/*
+          retention-days: 7
+          if-no-files-found: error
+
+  windows-templates:
+    name: Windows export template (x86_64, ${{ matrix.target }})
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      SCONS_CACHE_MSVC_CONFIG: true
+      PYTHONIOENCODING: utf8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: template_debug, name: windows_debug_x86_64 }
+          - { target: template_release, name: windows_release_x86_64 }
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: visionos-release-windows-${{ matrix.target }}
+        continue-on-error: true
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: Download Direct3D 12 SDK components
+        shell: sh
+        id: d3d12-sdk
+        run: |
+          if python ./misc/scripts/install_d3d12_sdk_windows.py; then
+            echo "D3D12_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Windows: Direct3D 12 SDK installation failed, building without Direct3D 12 support."
+            echo "D3D12_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+        continue-on-error: true
+
+      - name: Download pre-built ANGLE
+        shell: sh
+        id: angle-sdk
+        run: |
+          if python ./misc/scripts/install_angle.py; then
+            echo "ANGLE_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::ANGLE SDK installation failed, building without ANGLE support."
+            echo "ANGLE_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download pre-built AccessKit
+        shell: sh
+        id: accesskit-sdk
+        run: |
+          if python ./misc/scripts/install_accesskit.py; then
+            echo "ACCESSKIT_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::AccessKit SDK installation failed, building without AccessKit support."
+            echo "ACCESSKIT_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compilation
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=x86_64 d3d12=${{ steps.d3d12-sdk.outputs.D3D12_ENABLED }} accesskit=${{ steps.accesskit-sdk.outputs.ACCESSKIT_ENABLED }} angle=${{ steps.angle-sdk.outputs.ANGLE_ENABLED }}
+          platform: windows
+          target: ${{ matrix.target }}
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: visionos-release-windows-${{ matrix.target }}
+        continue-on-error: true
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp bin/godot.windows.${{ matrix.target }}.x86_64.exe out/${{ matrix.name }}.exe
+          # Console wrapper; the editor looks for `<template>_console.exe` next to the template.
+          cp bin/godot.windows.${{ matrix.target }}.x86_64.console.exe out/${{ matrix.name }}_console.exe
+          ls -l out
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: tpl-windows-${{ matrix.target }}
+          path: out/*
+          retention-days: 7
+          if-no-files-found: error
+
+  web-templates:
+    name: Web export template (nothreads, ${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      # Keep in sync with web_builds.yml.
+      EM_VERSION: 6.0.1
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: template_debug, name: web_nothreads_debug.zip }
+          - { target: template_release, name: web_nothreads_release.zip }
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Set up Emscripten
+        uses: emscripten-core/setup-emsdk@v16
+        with:
+          version: ${{ env.EM_VERSION }}
+          no-cache: true
+
+      - name: Verify Emscripten setup
+        run: |
+          emcc -v
+
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: visionos-release-web-nothreads-${{ matrix.target }}
+        continue-on-error: true
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: Compilation
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} threads=no
+          platform: web
+          target: ${{ matrix.target }}
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: visionos-release-web-nothreads-${{ matrix.target }}
+        continue-on-error: true
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          shopt -s nullglob
+          zips=(bin/godot.web.${{ matrix.target }}.wasm32.nothreads*.zip)
+          if [ "${#zips[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one nothreads web template zip, found: ${zips[*]:-none}"
+            exit 1
+          fi
+          cp "${zips[0]}" out/${{ matrix.name }}
+          unzip -l out/${{ matrix.name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: tpl-web-${{ matrix.target }}
+          path: out/*
+          retention-days: 7
+          if-no-files-found: error
+
+  # Android native libraries, one job per ABI and target; packaged by `android-templates`.
+  android-libs:
+    name: Android native library (${{ matrix.arch }}, ${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm32, arm64, x86_64]
+        target: [template_debug, template_release]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: visionos-release-android-${{ matrix.arch }}-${{ matrix.target }}
+        continue-on-error: true
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: Download Swappy
+        shell: sh
+        id: swappy_sdk
+        run: |
+          if python ./misc/scripts/install_swappy_android.py; then
+            echo "SWAPPY_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Swappy installation failed, building without Swappy support."
+            echo "SWAPPY_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compilation
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=${{ matrix.arch }} swappy=${{ steps.swappy_sdk.outputs.SWAPPY_ENABLED }}
+          platform: android
+          target: ${{ matrix.target }}
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: visionos-release-android-${{ matrix.arch }}-${{ matrix.target }}
+        continue-on-error: true
+
+      - name: List native libraries
+        run: find platform/android/java/lib/libs -type f | sort
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-android-libs-${{ matrix.arch }}-${{ matrix.target }}
+          path: platform/android/java/lib/libs
+          retention-days: 1
+          if-no-files-found: error
+
+  # android_source.zip (Gradle build template) plus android_debug.apk / android_release.apk.
+  android-templates:
+    name: Android export templates
+    runs-on: ubuntu-24.04
+    needs: [android-libs]
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Download native libraries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: build-android-libs-*
+          path: platform/android/java/lib/libs
+          merge-multiple: true
+
+      - name: Generate Godot templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          find platform/android/java/lib/libs -type f | sort
+          cd platform/android/java
+          ./gradlew generateGodotTemplates
+          cd ../../..
+          ls -l bin/
+          mkdir -p out
+          cp bin/android_source.zip bin/android_debug.apk bin/android_release.apk out/
+          for apk in out/android_debug.apk out/android_release.apk; do
+            unzip -l "$apk" | grep 'lib/.*/libgodot_android.so'
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: tpl-android
+          path: out/*
+          retention-days: 7
+          if-no-files-found: error
+
   publish:
     name: Publish release
     runs-on: ubuntu-24.04
-    needs: [metadata, templates, editor]
+    needs:
+      - metadata
+      - templates
+      - editor
+      - ios-templates
+      - macos-templates
+      - linux-templates
+      - windows-templates
+      - web-templates
+      - android-templates
     permissions:
       contents: write
 
@@ -282,10 +868,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Download artifacts
+      - name: Download visionOS templates
         uses: actions/download-artifact@v8
         with:
+          name: visionos-templates
           path: artifacts
+
+      - name: Download macOS editor
+        uses: actions/download-artifact@v8
+        with:
+          name: macos-editor
+          path: artifacts
+
+      - name: Download other platform templates
+        uses: actions/download-artifact@v8
+        with:
+          pattern: tpl-*
+          path: platform-templates
           merge-multiple: true
 
       - name: Assemble release assets
@@ -304,6 +903,28 @@ jobs:
           cp release/visionos.zip tpz/templates/visionos.zip
           echo "$GODOT_VERSION" > tpz/templates/version.txt
           (cd tpz && zip -r ../release/godot_visionos_export_templates.tpz templates)
+
+          # Complete template set for every platform, using the standard Godot template file names.
+          mkdir -p full/templates
+          cp platform-templates/* full/templates/
+          cp release/visionos.zip full/templates/visionos.zip
+          echo "$GODOT_VERSION" > full/templates/version.txt
+          chmod +x full/templates/linux_* full/templates/windows_*
+          required=(
+            version.txt visionos.zip ios.zip macos.zip
+            linux_debug.x86_64 linux_release.x86_64 linux_debug.arm64 linux_release.arm64
+            windows_debug_x86_64.exe windows_release_x86_64.exe
+            web_nothreads_debug.zip web_nothreads_release.zip
+            android_source.zip android_debug.apk android_release.apk
+          )
+          for f in "${required[@]}"; do
+            if [ ! -s "full/templates/$f" ]; then
+              echo "::error::Export template '$f' is missing or empty."
+              exit 1
+            fi
+          done
+          (cd full && zip -r -y ../release/godot_export_templates.tpz templates)
+          unzip -l release/godot_export_templates.tpz
 
           (cd release && shasum -a 256 * > SHA256SUMS.txt)
           ls -l release
@@ -327,6 +948,7 @@ jobs:
           | --- | --- |
           | \`visionos.zip\` | visionOS export template. Drop into the editor's export templates directory. |
           | \`godot_visionos_export_templates.tpz\` | Same template, packaged as an installable \`.tpz\`. |
+          | \`godot_export_templates.tpz\` | Every platform's export templates (visionOS, iOS, macOS, Linux x86_64/arm64, Windows x86_64, Web without threads, Android) from this commit. |
           | \`Godot_macos_editor.zip\` | macOS editor app bundle (universal, ad-hoc signed). |
           | \`godot.macos.editor.universal\` | Bare macOS editor binary for headless exports. |
           | \`SHA256SUMS.txt\` | Checksums for every asset above. |
