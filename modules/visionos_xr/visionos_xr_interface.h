@@ -103,6 +103,8 @@ private:
 	RenderingServer *rendering_server = nullptr;
 
 	ar_session_t ar_session = nullptr;
+	uint64_t authorization_revision = 0;
+	uint64_t world_authorization_updates = 0;
 
 	// Rendering in XR with CompositorServices
 	struct CompositorServicesData {
@@ -125,11 +127,13 @@ private:
 	// Checks the ARKit authorizations asynchronously
 	// and updates the ARKit session if they changed.
 	void update_authorizations_async();
+	void install_authorization_handler();
+	bool apply_authorization(int p_type, VisionOSAuthorizationStatus p_status);
 
 	// Time used for pose prediction
 	CFTimeInterval get_trackable_anchor_time();
 
-	void update_from_authorizations(ar_authorization_results_t);
+	void update_from_authorizations(ar_authorization_results_t p_results, uint64_t p_world_updates);
 
 	// Reads the live immersion style. Shared by get_immersion_style() and the
 	// environment blend mode, which is a portable view of the same setting.
@@ -306,6 +310,8 @@ public:
 	bool is_image_tracking_supported() const;
 	bool add_marker_reference_image(const String &p_name, const Ref<Image> &p_image, float p_physical_width);
 	void clear_marker_reference_images();
+	Dictionary replace_marker_reference_images(const Array &p_images);
+	Dictionary get_image_tracking_status();
 	int get_marker_reference_image_count() const;
 	VisionOSSceneUnderstanding *get_scene_understanding() { return &scene_understanding; }
 

@@ -36,6 +36,7 @@
 #include "servers/xr/xr_server.h"
 
 void VisionOSMarkerTracker::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("get_marker_observation"), &VisionOSMarkerTracker::get_marker_observation);
 	ClassDB::bind_method(D_METHOD("get_marker_uuid"), &VisionOSMarkerTracker::get_marker_uuid);
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "marker_uuid"), "", "get_marker_uuid");
 
@@ -106,6 +107,29 @@ void VisionOSMarkerTracker::set_marker_tracked(bool p_tracked) {
 
 bool VisionOSMarkerTracker::get_marker_tracked() const {
 	return tracked;
+}
+
+void VisionOSMarkerTracker::set_observation_source(const std::shared_ptr<VisionOSImageTrackingStore> &p_store, uint64_t p_generation) {
+	observation_store = p_store;
+	observation_generation = p_generation;
+}
+
+Dictionary VisionOSMarkerTracker::get_marker_observation() const {
+	const auto observation = observation_store ? observation_store->get_observation(uuid.utf8().get_data(), observation_generation) : VisionOSImageTrackingStore::Observation();
+	Dictionary result;
+	result["name"] = String::utf8(observation.name.c_str());
+	result["uuid"] = uuid;
+	result["transform"] = observation.transform;
+	result["tracked"] = observation.tracked;
+	result["removed"] = observation.removed;
+	result["physical_size"] = observation.physical_size;
+	result["estimated_scale_factor"] = observation.estimated_scale_factor;
+	result["reference_revision"] = observation.reference_revision;
+	result["generation"] = observation.generation;
+	result["sequence"] = observation.sequence;
+	result["observation_time"] = observation.observation_time;
+	result["received_ticks_usec"] = observation.received_ticks_usec;
+	return result;
 }
 
 #endif // VISIONOS_ENABLED

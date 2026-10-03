@@ -9,6 +9,17 @@
 	</description>
 	<tutorials>
 	</tutorials>
+	<methods>
+		<method name="get_marker_observation" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Returns one coherent native observation, rather than combining metadata from different updates. The dictionary contains [code]name[/code] and [code]uuid[/code] ([String]), [code]transform[/code] ([Transform3D]), [code]tracked[/code] and [code]removed[/code] ([bool]), [code]physical_size[/code] ([Vector2]), [code]estimated_scale_factor[/code] ([float]), [code]reference_revision[/code], [code]generation[/code], [code]sequence[/code], and [code]received_ticks_usec[/code] ([int]), and [code]observation_time[/code] ([float]).
+				The transform is in raw tracking meters, centered on the registered image: +X printed-right, +Y printed-top, +Z out of the face. No XR world scale or reference-frame adjustment is applied. Do not apply another ARKit-to-marker axis correction. Wall/floor alignment that preserves gravity should constrain the application alignment to yaw and translation, not alter this measured pose.
+				[code]observation_time[/code] is the ARKit image anchor timestamp. [code]received_ticks_usec[/code] is captured when its native callback starts, using the same monotonic clock as [method Time.get_ticks_usec]. Receipt age is not sensor-capture age; do not directly subtract the ARKit timestamp from Godot ticks. [code]sequence[/code] advances only on a new accepted native update, never when polled. Out-of-order and duplicate tracked timestamps are rejected; same-timestamp loss/removal may invalidate an observation.
+				Match [code]reference_revision[/code] and [code]generation[/code] against [method VisionOSXRInterface.get_image_tracking_status], require [code]tracked[/code], reject stale receipts, and use a distinct [code]sequence[/code] for each sample. Pausing, replacement, authorization loss, teardown and removal make [code]tracked[/code] false even if a caller retains this tracker. Retired trackers cannot acquire a later generation's observations.
+			</description>
+		</method>
+	</methods>
 	<members>
 		<member name="bounds_size" type="Vector2" setter="" getter="get_bounds_size" default="Vector2(0, 0)">
 			The registered physical size in meters, multiplied by [member estimated_scale_factor].
