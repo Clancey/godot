@@ -16,6 +16,10 @@ on:
         description: Mark the release as a pre-release.
         type: boolean
         default: true
+      dry_run:
+        description: Build and assemble everything, but publish nothing (assembled assets are kept as a run artifact).
+        type: boolean
+        default: false
 
 concurrency:
   group: visionos-release|${{ github.ref_name }}|${{ inputs.tag }}
@@ -37,6 +41,7 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
       godot-version: ${{ steps.meta.outputs.godot-version }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
+      dry-run: ${{ steps.meta.outputs.dry-run }}
 
     steps:
       - name: Checkout
@@ -75,6 +80,13 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           echo "Releasing '$tag' for Godot $godot_version"
+
+          dry_run=false
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            dry_run=true
+          fi
+          echo "dry-run=$dry_run" >> "$GITHUB_OUTPUT"
+          echo "Dry run: $dry_run"
 
   # visionOS export templates: device + simulator, debug + release, bundled into visionos.zip.
   templates:
@@ -988,7 +1000,20 @@ jobs:
           fi
           cat notes.md
 
+      # Dry run: keep the assembled release assets as a short-lived run artifact; publish nothing.
+      - name: Upload assembled release (dry run)
+        if: needs.metadata.outputs.dry-run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: dry-run-release
+          path: |
+            release/*
+            notes.md
+          retention-days: 3
+          if-no-files-found: error
+
       - name: Publish
+        if: needs.metadata.outputs.dry-run != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.metadata.outputs.tag }}
