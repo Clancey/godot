@@ -41,6 +41,7 @@ jobs:
             proj-conv: true
             proj-export: true
             api-compat: true
+            artifact: true
             # Validate godot-cpp compatibility on one arbitrary editor build.
             godot-cpp: true
             clangd-tidy: true
@@ -92,12 +93,14 @@ jobs:
             target: template_release
             scons-flags: module_mono_enabled=yes
             bin: ./bin/godot.linuxbsd.template_release.x86_64.mono
+            artifact: true
 
           - name: Template w/ Mono, debug (target=template_debug)
             cache-name: linux-template-mono-debug
             target: template_debug
             scons-flags: module_mono_enabled=yes
             bin: ./bin/godot.linuxbsd.template_debug.x86_64.mono
+            artifact: true
 
           - name: Minimal template (target=template_release, everything disabled)
             cache-name: linux-template-minimal
@@ -113,6 +116,7 @@ jobs:
               minizip=no
               brotli=no
             bin: ./bin/godot.linuxbsd.template_release.x86_64
+            artifact: true
 
     steps:
       - name: Checkout
@@ -219,6 +223,19 @@ jobs:
         run: |
           dotnet --info
           ./modules/mono/build_scripts/build_assemblies.py --godot-output-dir=./bin --godot-platform=linuxbsd --werror
+
+      - name: Prepare artifact
+        if: matrix.artifact
+        run: |
+          rm -rf ./bin/build_deps
+          strip bin/godot.*
+          chmod +x bin/godot.*
+
+      - name: Upload artifact
+        uses: ./.github/actions/upload-artifact
+        if: matrix.artifact
+        with:
+          name: ${{ matrix.cache-name }}
 
       - name: Unit tests
         run: |
