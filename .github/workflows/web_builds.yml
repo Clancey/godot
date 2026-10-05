@@ -24,13 +24,11 @@ jobs:
             cache-name: web-template
             target: template_release
             scons-flags: threads=yes
-            artifact: true
 
           - name: Template w/o threads (target=template_release, threads=no)
             cache-name: web-nothreads-template
             target: template_release
             scons-flags: threads=no
-            artifact: true
 
     steps:
       - name: Checkout
@@ -69,9 +67,3 @@ jobs:
         with:
           cache-name: ${{ matrix.cache-name }}
         continue-on-error: true
-
-      - name: Upload artifact
-        uses: ./.github/actions/upload-artifact
-        if: matrix.artifact
-        with:
-          name: ${{ matrix.cache-name }}
