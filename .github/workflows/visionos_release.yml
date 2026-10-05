@@ -16,10 +16,19 @@ on:
         description: Mark the release as a pre-release.
         type: boolean
         default: true
+      dry_run:
+        description: Build and assemble everything, but publish nothing (assets stay in this run's draft handoff release).
+        type: boolean
+        default: false
 
 concurrency:
   group: visionos-release|${{ github.ref_name }}|${{ inputs.tag }}
   cancel-in-progress: false
+
+# Jobs hand files to each other through a run-scoped draft release (see the metadata job), never
+# through Actions artifact storage, so every job needs to write release assets.
+permissions:
+  contents: write
 
 env:
   SCONS_FLAGS: >-
@@ -37,6 +46,8 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
       godot-version: ${{ steps.meta.outputs.godot-version }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
+      dry-run: ${{ steps.meta.outputs.dry-run }}
+      handoff: ${{ steps.handoff.outputs.handoff }}
 
     steps:
       - name: Checkout
@@ -72,13 +83,50 @@ jobs:
             prerelease=true
           fi
 
+          dry_run=false
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            dry_run=true
+          fi
+
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-          echo "Releasing '$tag' for Godot $godot_version"
+          echo "dry-run=$dry_run" >> "$GITHUB_OUTPUT"
+          echo "Releasing '$tag' for Godot $godot_version (dry run: $dry_run)"
+
+      # Build outputs move between jobs as assets of this draft release instead of Actions artifacts.
+      # Drafts are only visible to collaborators and create no git tag. It is deleted once the real
+      # release is published; drafts of failed runs are kept for "Re-run failed jobs" and swept
+      # after 7 days.
+      - name: Create handoff draft release
+        id: handoff
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HANDOFF: visionos-handoff-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          cutoff=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          gh release list --limit 200 --json tagName,isDraft,createdAt \
+            --jq ".[] | select(.isDraft and (.tagName | startswith(\"visionos-handoff-\")) and .createdAt < \"$cutoff\") | .tagName" |
+            while read -r stale; do
+              [ "$stale" != "$HANDOFF" ] || continue
+              echo "Deleting stale handoff draft $stale"
+              gh release delete "$stale" --yes || true
+            done
+
+          if ! gh release view "$HANDOFF" > /dev/null 2>&1; then
+            gh release create "$HANDOFF" --draft --target "${{ github.sha }}" \
+              --title "CI handoff for run ${{ github.run_id }} (not a release)" \
+              --notes "Temporary build outputs for ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Deleted automatically."
+          fi
+          echo "handoff=$HANDOFF" >> "$GITHUB_OUTPUT"
 
   # visionOS export templates: device + simulator, debug + release, bundled into visionos.zip.
   templates:
     name: visionOS export templates
+    needs: [metadata]
     runs-on: macos-26
     timeout-minutes: 180
 
@@ -144,7 +192,7 @@ jobs:
           cache-name: visionos-release-templates
         continue-on-error: true
 
-      - name: Prepare artifact
+      - name: Prepare outputs
         shell: bash
         run: |
           set -euo pipefail
@@ -153,17 +201,17 @@ jobs:
           mv bin/godot_visionos.zip visionos.zip
           unzip -l visionos.zip | head -40
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
+      - name: Hand off to publish
+        uses: ./.github/actions/release-handoff
         with:
-          name: visionos-templates
-          path: visionos.zip
-          retention-days: 7
-          if-no-files-found: error
+          release: ${{ needs.metadata.outputs.handoff }}
+          upload: |
+            visionos.zip
 
   # macOS editor used to run `--export-release visionOS` in downstream app CI.
   editor:
     name: macOS editor (universal)
+    needs: [metadata]
     runs-on: macos-26
     timeout-minutes: 180
 
@@ -261,25 +309,25 @@ jobs:
 
           ./godot.macos.editor.universal --headless --version
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
+      - name: Hand off to publish
+        uses: ./.github/actions/release-handoff
         with:
-          name: macos-editor
-          path: |
+          release: ${{ needs.metadata.outputs.handoff }}
+          upload: |
             Godot_macos_editor.zip
             godot.macos.editor.universal
-          retention-days: 7
-          if-no-files-found: error
 
   # ---------------------------------------------------------------------------------------------
   # Export templates for every other platform, so `godot_export_templates.tpz` is a complete set
-  # built from the same commit as the editor. Final files are uploaded as `tpl-*` artifacts using
-  # the standard Godot export template file names; intermediate build outputs use `build-*`.
+  # built from the same commit as the editor. Final files are handed off to `publish` under the
+  # standard Godot export template file names; intermediate outputs (macOS per-arch binaries,
+  # Android native library tarballs) are only consumed by the bundling jobs.
   # ---------------------------------------------------------------------------------------------
 
   # iOS export template: device arm64, debug + release, bundled into ios.zip (Xcode project).
   ios-templates:
     name: iOS export templates
+    needs: [metadata]
     runs-on: macos-26
     timeout-minutes: 180
 
@@ -328,7 +376,7 @@ jobs:
           cache-name: visionos-release-ios-templates
         continue-on-error: true
 
-      - name: Prepare artifact
+      - name: Prepare outputs
         shell: bash
         run: |
           set -euo pipefail
@@ -336,17 +384,17 @@ jobs:
           mv bin/godot_ios.zip out/ios.zip
           unzip -l out/ios.zip | grep -E 'libgodot\.a|MoltenVK|godot_apple_embedded.xcodeproj/project.pbxproj'
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
+      - name: Hand off to publish
+        uses: ./.github/actions/release-handoff
         with:
-          name: tpl-ios
-          path: out/*
-          retention-days: 7
-          if-no-files-found: error
+          release: ${{ needs.metadata.outputs.handoff }}
+          upload: |
+            out/ios.zip
 
   # macOS export template binaries, one job per architecture; bundled by `macos-templates`.
   macos-templates-build:
     name: macOS export templates (${{ matrix.arch }})
+    needs: [metadata]
     runs-on: macos-26
     timeout-minutes: 180
     strategy:
@@ -428,27 +476,19 @@ jobs:
           cache-name: visionos-release-macos-templates-${{ matrix.arch }}
         continue-on-error: true
 
-      - name: Prepare artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p out
-          cp bin/godot.macos.template_debug.${{ matrix.arch }} bin/godot.macos.template_release.${{ matrix.arch }} out/
-          ls -l out
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
+      - name: Hand off to the macOS bundle job
+        uses: ./.github/actions/release-handoff
         with:
-          name: build-macos-templates-${{ matrix.arch }}
-          path: out/*
-          retention-days: 1
-          if-no-files-found: error
+          release: ${{ needs.metadata.outputs.handoff }}
+          upload: |
+            bin/godot.macos.template_debug.${{ matrix.arch }}
+            bin/godot.macos.template_release.${{ matrix.arch }}
 
   # Universal macos.zip (macos_template.app), assembled like `generate_bundle=yes` does for templates.
   macos-templates:
     name: macOS export templates (universal bundle)
     runs-on: macos-26
-    needs: [macos-templates-build]
+    needs: [metadata, macos-templates-build]
     timeout-minutes: 30
 
     steps:
@@ -456,11 +496,11 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Download template binaries
-        uses: actions/download-artifact@v8
+        uses: ./.github/actions/release-handoff
         with:
-          pattern: build-macos-templates-*
-          path: bin
-          merge-multiple: true
+          release: ${{ needs.metadata.outputs.handoff }}
+          dir: bin
+          download: godot.macos.template_*
 
       - name: Bundle macos_template.app
         shell: bash
@@ -479,16 +519,16 @@ jobs:
           (cd bin && zip -q -r -y ../out/macos.zip macos_template.app)
           unzip -l out/macos.zip
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
+      - name: Hand off to publish
+        uses: ./.github/actions/release-handoff
         with:
-          name: tpl-macos
-          path: out/*
-          retention-days: 7
-          if-no-files-found: error
+          release: ${{ needs.metadata.outputs.handoff }}
+          upload: |
+            out/macos.zip
 
   linux-templates:
     name: Linux export template (${{ matrix.arch }}, ${{ matrix.target }})
+    needs: [metadata]
     # Stay one LTS before latest (same as linux_builds.yml) to keep the glibc requirement low.
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
@@ -547,7 +587,7 @@ jobs:
           cache-name: visionos-release-linux-${{ matrix.arch }}-${{ matrix.target }}
         continue-on-error: true
 
-      - name: Prepare artifact
+      - name: Prepare outputs
         shell: bash
         run: |
           set -euo pipefail
@@ -558,16 +598,16 @@ jobs:
           file out/${{ matrix.name }}
           ./out/${{ matrix.name }} --headless --version || true
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
+      - name: Hand off to publish
+        uses: ./.github/actions/release-handoff
         with:
-          name: tpl-linux-${{ matrix.arch }}-${{ matrix.target }}
-          path: out/*
-          retention-days: 7
-          if-no-files-found: error
+          release: ${{ needs.metadata.outputs.handoff }}
+          upload: |
+            out/${{ matrix.name }}
 
   windows-templates:
     name: Windows export template (x86_64, ${{ matrix.target }})
+    needs: [metadata]
     runs-on: windows-latest
     timeout-minutes: 180
     env:
@@ -642,7 +682,7 @@ jobs:
           cache-name: visionos-release-windows-${{ matrix.target }}
         continue-on-error: true
 
-      - name: Prepare artifact
+      - name: Prepare outputs
         shell: bash
         run: |
           set -euo pipefail
@@ -652,16 +692,17 @@ jobs:
           cp bin/godot.windows.${{ matrix.target }}.x86_64.console.exe out/${{ matrix.name }}_console.exe
           ls -l out
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
+      - name: Hand off to publish
+        uses: ./.github/actions/release-handoff
         with:
-          name: tpl-windows-${{ matrix.target }}
-          path: out/*
-          retention-days: 7
-          if-no-files-found: error
+          release: ${{ needs.metadata.outputs.handoff }}
+          upload: |
+            out/${{ matrix.name }}.exe
+            out/${{ matrix.name }}_console.exe
 
   web-templates:
     name: Web export template (nothreads, ${{ matrix.target }})
+    needs: [metadata]
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
@@ -712,7 +753,7 @@ jobs:
           cache-name: visionos-release-web-nothreads-${{ matrix.target }}
         continue-on-error: true
 
-      - name: Prepare artifact
+      - name: Prepare outputs
         shell: bash
         run: |
           set -euo pipefail
@@ -726,17 +767,17 @@ jobs:
           cp "${zips[0]}" out/${{ matrix.name }}
           unzip -l out/${{ matrix.name }}
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
+      - name: Hand off to publish
+        uses: ./.github/actions/release-handoff
         with:
-          name: tpl-web-${{ matrix.target }}
-          path: out/*
-          retention-days: 7
-          if-no-files-found: error
+          release: ${{ needs.metadata.outputs.handoff }}
+          upload: |
+            out/${{ matrix.name }}
 
   # Android native libraries, one job per ABI and target; packaged by `android-templates`.
   android-libs:
     name: Android native library (${{ matrix.arch }}, ${{ matrix.target }})
+    needs: [metadata]
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     strategy:
@@ -790,22 +831,25 @@ jobs:
           cache-name: visionos-release-android-${{ matrix.arch }}-${{ matrix.target }}
         continue-on-error: true
 
-      - name: List native libraries
-        run: find platform/android/java/lib/libs -type f | sort
+      - name: Package native libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          find platform/android/java/lib/libs -type f | sort
+          tar -C platform/android/java/lib/libs -cf android-libs-${{ matrix.arch }}-${{ matrix.target }}.tar .
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
+      - name: Hand off to the Android packaging job
+        uses: ./.github/actions/release-handoff
         with:
-          name: build-android-libs-${{ matrix.arch }}-${{ matrix.target }}
-          path: platform/android/java/lib/libs
-          retention-days: 1
-          if-no-files-found: error
+          release: ${{ needs.metadata.outputs.handoff }}
+          upload: |
+            android-libs-${{ matrix.arch }}-${{ matrix.target }}.tar
 
   # android_source.zip (Gradle build template) plus android_debug.apk / android_release.apk.
   android-templates:
     name: Android export templates
     runs-on: ubuntu-24.04
-    needs: [android-libs]
+    needs: [metadata, android-libs]
     timeout-minutes: 60
 
     steps:
@@ -824,11 +868,20 @@ jobs:
         uses: ./.github/actions/godot-deps
 
       - name: Download native libraries
-        uses: actions/download-artifact@v8
+        uses: ./.github/actions/release-handoff
         with:
-          pattern: build-android-libs-*
-          path: platform/android/java/lib/libs
-          merge-multiple: true
+          release: ${{ needs.metadata.outputs.handoff }}
+          dir: android-libs
+          download: android-libs-*.tar
+
+      - name: Extract native libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p platform/android/java/lib/libs
+          for t in android-libs/android-libs-*.tar; do
+            tar -C platform/android/java/lib/libs -xf "$t"
+          done
 
       - name: Generate Godot templates
         shell: bash
@@ -845,13 +898,14 @@ jobs:
             unzip -l "$apk" | grep 'lib/.*/libgodot_android.so'
           done
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
+      - name: Hand off to publish
+        uses: ./.github/actions/release-handoff
         with:
-          name: tpl-android
-          path: out/*
-          retention-days: 7
-          if-no-files-found: error
+          release: ${{ needs.metadata.outputs.handoff }}
+          upload: |
+            out/android_source.zip
+            out/android_debug.apk
+            out/android_release.apk
 
   publish:
     name: Publish release
@@ -873,24 +927,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Download visionOS templates
-        uses: actions/download-artifact@v8
+      - name: Download visionOS templates and macOS editor
+        uses: ./.github/actions/release-handoff
         with:
-          name: visionos-templates
-          path: artifacts
-
-      - name: Download macOS editor
-        uses: actions/download-artifact@v8
-        with:
-          name: macos-editor
-          path: artifacts
+          release: ${{ needs.metadata.outputs.handoff }}
+          dir: editor-assets
+          download: |
+            visionos.zip
+            Godot_macos_editor.zip
+            godot.macos.editor.universal
 
       - name: Download other platform templates
-        uses: actions/download-artifact@v8
+        uses: ./.github/actions/release-handoff
         with:
-          pattern: tpl-*
-          path: platform-templates
-          merge-multiple: true
+          release: ${{ needs.metadata.outputs.handoff }}
+          dir: platform-templates
+          download: |
+            ios.zip
+            macos.zip
+            linux_*
+            windows_*
+            web_nothreads_*.zip
+            android_source.zip
+            android_*.apk
 
       - name: Assemble release assets
         shell: bash
@@ -899,9 +958,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          cp artifacts/visionos.zip release/visionos.zip
-          cp artifacts/Godot_macos_editor.zip release/Godot_macos_editor.zip
-          cp artifacts/godot.macos.editor.universal release/godot.macos.editor.universal
+          cp editor-assets/visionos.zip release/visionos.zip
+          cp editor-assets/Godot_macos_editor.zip release/Godot_macos_editor.zip
+          cp editor-assets/godot.macos.editor.universal release/godot.macos.editor.universal
 
           # A .tpz that the editor / downstream CI can install as a complete template set.
           mkdir -p tpz/templates
@@ -988,7 +1047,20 @@ jobs:
           fi
           cat notes.md
 
+      # Dry run: keep the assembled assets in the draft handoff release for inspection; publish nothing.
+      - name: Upload assembled assets to the handoff draft (dry run)
+        if: needs.metadata.outputs.dry-run == 'true'
+        uses: ./.github/actions/release-handoff
+        with:
+          release: ${{ needs.metadata.outputs.handoff }}
+          upload: |
+            release/SHA256SUMS.txt
+            release/godot_visionos_export_templates.tpz
+            release/godot_export_templates.tpz
+            notes.md
+
       - name: Publish
+        if: needs.metadata.outputs.dry-run != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.metadata.outputs.tag }}
@@ -1025,3 +1097,10 @@ jobs:
           fi
 
           gh release create "$TAG" --repo "$REPO" "${flags[@]}" release/*
+
+      - name: Delete handoff draft release
+        if: needs.metadata.outputs.dry-run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: gh release delete "${{ needs.metadata.outputs.handoff }}" --repo "${{ github.repository }}" --yes
