@@ -40,3 +40,6 @@ jobs:
       - name: Save Godot build cache
         uses: ./.github/actions/godot-cache-save
         continue-on-error: true
+
+      - name: Upload artifact
+        uses: ./.github/actions/upload-artifact
