@@ -92,21 +92,44 @@ bool visionos_apply_head_pose(const std::shared_ptr<const Geometry> &p_geometry,
 	return true;
 }
 
-template <typename Hands, typename Controllers>
-void visionos_reset_input_tracking(Hands &p_hands, Controllers &p_controllers) {
+// `p_left_hand` and `p_right_hand` are the shared `left_hand` and `right_hand`
+// controllers that hand gestures, accessories and spatial events all drive.
+template <typename Hands, typename Controllers, typename SharedController>
+void visionos_reset_input_tracking(Hands &p_hands, Controllers &p_controllers, SharedController &p_left_hand, SharedController &p_right_hand) {
 	if (p_hands.enabled) {
 		p_hands.reset_hand_tracker_data(p_hands.left_hand_tracker);
 		p_hands.reset_hand_tracker_data(p_hands.right_hand_tracker);
 		p_hands.reset_gestures(Hands::HAND_LEFT, p_hands.left_hand_tracker);
 		p_hands.reset_gestures(Hands::HAND_RIGHT, p_hands.right_hand_tracker);
 		if (!p_controllers.enabled) {
-			p_hands.publish_gestures(Hands::HAND_LEFT, p_hands.left_hand_controller_tracker);
-			p_hands.publish_gestures(Hands::HAND_RIGHT, p_hands.right_hand_controller_tracker);
+			p_hands.publish_gestures(Hands::HAND_LEFT, p_left_hand);
+			p_hands.publish_gestures(Hands::HAND_RIGHT, p_right_hand);
 		}
 	}
 	if (p_controllers.enabled) {
 		// These trackers may contain either optical gestures or accessory input.
-		p_controllers.reset_controller_tracker_data(p_controllers.left_controller_tracker);
-		p_controllers.reset_controller_tracker_data(p_controllers.right_controller_tracker);
+		p_controllers.reset_controller_tracker_data(p_left_hand.tracker);
+		p_controllers.reset_controller_tracker_data(p_right_hand.tracker);
 	}
+}
+
+// A spatial event (the system pinch) owns `trigger_click` and the `default`
+// pose of a shared controller while it is active. Ending it latches the hand
+// gesture `trigger_click` until the optical pinch is released too, so a single
+// pinch never clicks twice.
+template <typename SharedController>
+void visionos_set_spatial_event_active(SharedController &p_controller, bool p_active) {
+	if (p_controller.controlled_by_spatial_event && !p_active) {
+		p_controller.hand_trigger_released_by_spatial_event = true;
+	}
+	p_controller.controlled_by_spatial_event = p_active;
+}
+
+// Returns whether the optical pinch may write `trigger_click` this frame.
+template <typename SharedController>
+bool visionos_hand_gesture_owns_trigger(SharedController &p_controller, bool p_pinch_click) {
+	if (!p_pinch_click) {
+		p_controller.hand_trigger_released_by_spatial_event = false;
+	}
+	return !p_controller.controlled_by_spatial_event && !p_controller.hand_trigger_released_by_spatial_event;
 }

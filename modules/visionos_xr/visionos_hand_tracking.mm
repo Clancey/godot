@@ -116,7 +116,7 @@ _FORCE_INLINE_ bool is_joint_tracked(const Ref<XRHandTracker> &p_hand_tracker, X
 }
 } // namespace
 
-void VisionOSHandTracking::initialize(XRServer *p_xr_server, bool p_accessory_tracking_enabled) {
+void VisionOSHandTracking::initialize(XRServer *p_xr_server) {
 	// Hand tracking provider (registered with the shared ARKit session)
 	ar_hand_tracking_configuration_t hand_tracking_configuration = ar_hand_tracking_configuration_create();
 	hand_tracking_provider = ar_hand_tracking_provider_create(hand_tracking_configuration);
@@ -132,40 +132,8 @@ void VisionOSHandTracking::initialize(XRServer *p_xr_server, bool p_accessory_tr
 	right_hand_tracker->set_tracker_name("/user/hand_tracker/right");
 	p_xr_server->add_tracker(right_hand_tracker);
 
-	// When accessory tracking is enabled, VisionOSControllerTracking registers
-	// `left_hand` and `right_hand` itself and gestures are mirrored into those.
-	// Otherwise register them here so hand gestures still drive XRController3D.
-	if (!p_accessory_tracking_enabled) {
-		left_hand_controller_tracker.instantiate();
-		left_hand_controller_tracker->set_tracker_hand(XRPositionalTracker::TRACKER_HAND_LEFT);
-		left_hand_controller_tracker->set_tracker_name("left_hand");
-		left_hand_controller_tracker->set_tracker_desc("visionOS Left Hand");
-		p_xr_server->add_tracker(left_hand_controller_tracker);
-
-		right_hand_controller_tracker.instantiate();
-		right_hand_controller_tracker->set_tracker_hand(XRPositionalTracker::TRACKER_HAND_RIGHT);
-		right_hand_controller_tracker->set_tracker_name("right_hand");
-		right_hand_controller_tracker->set_tracker_desc("visionOS Right Hand");
-		p_xr_server->add_tracker(right_hand_controller_tracker);
-	}
-
 	left_hand_anchor = ar_hand_anchor_create();
 	right_hand_anchor = ar_hand_anchor_create();
-}
-
-void VisionOSHandTracking::uninitialize(XRServer *p_xr_server) {
-	if (p_xr_server == nullptr) {
-		return;
-	}
-
-	if (left_hand_controller_tracker.is_valid()) {
-		p_xr_server->remove_tracker(left_hand_controller_tracker);
-		left_hand_controller_tracker.unref();
-	}
-	if (right_hand_controller_tracker.is_valid()) {
-		p_xr_server->remove_tracker(right_hand_controller_tracker);
-		right_hand_controller_tracker.unref();
-	}
 }
 
 void VisionOSHandTracking::update_hand_trackers_from_arkit(CFTimeInterval p_trackable_anchor_time) {
@@ -285,39 +253,51 @@ void VisionOSHandTracking::reset_gestures(HandIndex p_hand, const Ref<XRHandTrac
 	p_hand_tracker->set_input("grasp_click", false);
 }
 
-void VisionOSHandTracking::publish_gestures(HandIndex p_hand, const Ref<XRControllerTracker> &p_controller_tracker) {
-	if (p_controller_tracker.is_null()) {
+void VisionOSHandTracking::publish_gestures(HandIndex p_hand, VisionOSSharedController &p_controller) {
+	const Ref<XRControllerTracker> &controller_tracker = p_controller.tracker;
+	if (controller_tracker.is_null()) {
 		return;
 	}
 
 	const GestureState &state = gestures[p_hand];
+
+	// A spatial event (the system pinch) owns `trigger_click` and the `default`
+	// pose while it is active.
+	const bool spatial_event_active = p_controller.controlled_by_spatial_event;
+	const bool publish_trigger_click = visionos_hand_gesture_owns_trigger(p_controller, state.pinch_click);
 	const Ref<XRHandTracker> &hand_tracker = (p_hand == HAND_LEFT) ? left_hand_tracker : right_hand_tracker;
 
 	// These controller poses come from optical joints, not a physical accessory.
-	p_controller_tracker->set_tracker_profile("visionos_hand_tracking");
+	controller_tracker->set_tracker_profile("visionos_hand_tracking");
 
 	// Map onto the same action names the accessory controllers use, so gameplay
 	// built on XRController3D works with either input source.
-	p_controller_tracker->set_input("trigger", state.pinch_value);
-	p_controller_tracker->set_input("trigger_click", state.pinch_click);
-	p_controller_tracker->set_input("grip", state.grasp_value);
-	p_controller_tracker->set_input("grip_click", state.grasp_click);
+	controller_tracker->set_input("trigger", state.pinch_value);
+	if (publish_trigger_click) {
+		controller_tracker->set_input("trigger_click", state.pinch_click);
+	}
+	controller_tracker->set_input("grip", state.grasp_value);
+	controller_tracker->set_input("grip_click", state.grasp_click);
 
 	if (hand_tracker.is_null() || !hand_tracker->get_has_tracking_data()) {
-		p_controller_tracker->invalidate_pose("default");
-		p_controller_tracker->invalidate_pose("aim");
-		p_controller_tracker->invalidate_pose("grip");
-		p_controller_tracker->invalidate_pose("palm");
+		if (!spatial_event_active) {
+			controller_tracker->invalidate_pose("default");
+		}
+		controller_tracker->invalidate_pose("aim");
+		controller_tracker->invalidate_pose("grip");
+		controller_tracker->invalidate_pose("palm");
 		return;
 	}
 
 	const Transform3D aim = visionos_hand_aim_pose(hand_tracker);
 	const Transform3D grip = visionos_hand_grip_pose(hand_tracker);
 
-	p_controller_tracker->set_pose("default", aim, Vector3(), Vector3());
-	p_controller_tracker->set_pose("aim", aim, Vector3(), Vector3());
-	p_controller_tracker->set_pose("grip", grip, Vector3(), Vector3());
-	p_controller_tracker->set_pose("palm", grip, Vector3(), Vector3());
+	if (!spatial_event_active) {
+		controller_tracker->set_pose("default", aim, Vector3(), Vector3());
+	}
+	controller_tracker->set_pose("aim", aim, Vector3(), Vector3());
+	controller_tracker->set_pose("grip", grip, Vector3(), Vector3());
+	controller_tracker->set_pose("palm", grip, Vector3(), Vector3());
 }
 
 void VisionOSHandTracking::reset_hand_tracker_data(Ref<XRHandTracker> p_hand_tracker) {
