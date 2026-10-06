@@ -368,6 +368,22 @@ def setup_swift_builder(env, apple_platform, sdk_path, current_path, bridging_he
             ]
         )
 
+    # Simulator platforms don't ship compiler plugins (e.g. SwiftUIMacros); Xcode
+    # loads them from the matching device platform instead.
+    simulator_device_platforms = {
+        "iossimulator": ("iPhoneSimulator.platform", "iPhoneOS.platform"),
+        "visionossimulator": ("XRSimulator.platform", "XROS.platform"),
+    }
+    if apple_platform in simulator_device_platforms and "osxcross" not in env:
+        sim_platform, device_platform = simulator_device_platforms[apple_platform]
+        platform_dir_index = sdk_path.find(sim_platform)
+        if platform_dir_index != -1:
+            device_platform_path = sdk_path[:platform_dir_index] + device_platform + "/Developer"
+            plugins_path = device_platform_path + "/usr/lib/swift/host/plugins"
+            plugin_server_path = device_platform_path + "/usr/bin/swift-plugin-server"
+            if os.path.isdir(plugins_path) and os.path.isfile(plugin_server_path):
+                env.Append(SWIFTCFLAGS=["-external-plugin-path", plugins_path + "#" + plugin_server_path])
+
     if env["debug_symbols"]:
         env.Append(SWIFTCFLAGS=["-g"])
 
