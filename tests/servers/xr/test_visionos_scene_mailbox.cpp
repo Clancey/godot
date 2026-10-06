@@ -468,14 +468,16 @@ TEST_CASE("[visionOS] Shared tracking access serializes retiring presenters and 
 	CHECK(active.load() == 0);
 }
 
+struct LostInputSharedController {
+	Ref<XRPositionalTracker> tracker;
+};
+
 struct LostInputHands {
 	enum HandIndex { HAND_LEFT,
 		HAND_RIGHT };
 	bool enabled = true;
 	Ref<XRPositionalTracker> left_hand_tracker;
 	Ref<XRPositionalTracker> right_hand_tracker;
-	Ref<XRPositionalTracker> left_hand_controller_tracker;
-	Ref<XRPositionalTracker> right_hand_controller_tracker;
 	bool pressed[2] = { true, true };
 	int resets = 0;
 	int publications = 0;
@@ -489,18 +491,16 @@ struct LostInputHands {
 		p_tracker->set_input("pinch_click", false);
 		p_tracker->set_input("grasp_click", false);
 	}
-	void publish_gestures(HandIndex p_hand, const Ref<XRPositionalTracker> &p_tracker) {
-		p_tracker->set_input("trigger_click", pressed[p_hand]);
-		p_tracker->set_input("grip_click", pressed[p_hand]);
-		p_tracker->invalidate_pose("default");
+	void publish_gestures(HandIndex p_hand, LostInputSharedController &p_controller) {
+		p_controller.tracker->set_input("trigger_click", pressed[p_hand]);
+		p_controller.tracker->set_input("grip_click", pressed[p_hand]);
+		p_controller.tracker->invalidate_pose("default");
 		publications++;
 	}
 };
 
 struct LostInputControllers {
 	bool enabled = false;
-	Ref<XRPositionalTracker> left_controller_tracker;
-	Ref<XRPositionalTracker> right_controller_tracker;
 	int resets = 0;
 
 	void reset_controller_tracker_data(const Ref<XRPositionalTracker> &p_tracker) {
@@ -514,6 +514,8 @@ struct LostInputControllers {
 TEST_CASE("[visionOS] Missing head geometry releases hand gestures and controller input before returning") {
 	LostInputHands hands;
 	LostInputControllers controllers;
+	LostInputSharedController left_hand;
+	LostInputSharedController right_hand;
 	SUBCASE("Hand-only controller mirrors") {}
 	SUBCASE("Accessory-capable controller trackers including optical mirrors") {
 		controllers.enabled = true;
@@ -524,8 +526,7 @@ TEST_CASE("[visionOS] Missing head geometry releases hand gestures and controlle
 	}
 	Ref<XRPositionalTracker> *trackers[] = {
 		&hands.left_hand_tracker, &hands.right_hand_tracker,
-		&hands.left_hand_controller_tracker, &hands.right_hand_controller_tracker,
-		&controllers.left_controller_tracker, &controllers.right_controller_tracker
+		&left_hand.tracker, &right_hand.tracker
 	};
 	for (auto *tracker : trackers) {
 		tracker->instantiate();
@@ -535,7 +536,7 @@ TEST_CASE("[visionOS] Missing head geometry releases hand gestures and controlle
 		(*tracker)->set_input("trigger_click", true);
 		(*tracker)->set_input("grip_click", true);
 	}
-	visionos_reset_input_tracking(hands, controllers);
+	visionos_reset_input_tracking(hands, controllers, left_hand, right_hand);
 	CHECK(hands.resets == (hands.enabled ? 2 : 0));
 	CHECK(hands.publications == (hands.enabled && !controllers.enabled ? 2 : 0));
 	CHECK(controllers.resets == (controllers.enabled ? 2 : 0));
@@ -548,13 +549,44 @@ TEST_CASE("[visionOS] Missing head geometry releases hand gestures and controlle
 			CHECK_FALSE(bool(tracker->get_input("grasp_click")));
 		}
 	}
-	for (const auto &tracker : {
-				 controllers.enabled ? controllers.left_controller_tracker : hands.left_hand_controller_tracker,
-				 controllers.enabled ? controllers.right_controller_tracker : hands.right_hand_controller_tracker }) {
+	for (const auto &tracker : { left_hand.tracker, right_hand.tracker }) {
 		CHECK_FALSE(tracker->get_pose("default")->get_has_tracking_data());
 		CHECK_FALSE(bool(tracker->get_input("trigger_click")));
 		CHECK_FALSE(bool(tracker->get_input("grip_click")));
 	}
+}
+
+struct SpatialEventSharedController {
+	bool controlled_by_spatial_event = false;
+	bool hand_trigger_released_by_spatial_event = false;
+};
+
+TEST_CASE("[visionOS] Spatial events own trigger_click and latch the optical pinch until it is released") {
+	SpatialEventSharedController controller;
+
+	// Optical pinch before any system pinch.
+	CHECK(visionos_hand_gesture_owns_trigger(controller, true));
+
+	// The system pinch takes over while active.
+	visionos_set_spatial_event_active(controller, true);
+	CHECK_FALSE(visionos_hand_gesture_owns_trigger(controller, true));
+	visionos_set_spatial_event_active(controller, true);
+	CHECK_FALSE(controller.hand_trigger_released_by_spatial_event);
+
+	// Releasing the system pinch must not let a lingering optical pinch click again.
+	visionos_set_spatial_event_active(controller, false);
+	CHECK(controller.hand_trigger_released_by_spatial_event);
+	CHECK_FALSE(visionos_hand_gesture_owns_trigger(controller, true));
+	CHECK_FALSE(visionos_hand_gesture_owns_trigger(controller, true));
+
+	// Once the optical pinch is released, hand gestures own the trigger again.
+	CHECK(visionos_hand_gesture_owns_trigger(controller, false));
+	CHECK(visionos_hand_gesture_owns_trigger(controller, true));
+
+	// An ended event that was never active does not latch.
+	visionos_set_spatial_event_active(controller, false);
+	CHECK_FALSE(controller.hand_trigger_released_by_spatial_event);
+	CHECK(visionos_hand_gesture_owns_trigger(controller, true));
 }
 
 struct Output {

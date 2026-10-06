@@ -37,11 +37,16 @@
 
 #include "platform/visionos/godot_compositor_services_renderer.h"
 
-void VisionOSControllerTracking::initialize(XRServer *p_xr_server, VisionOSXRInterface *p_xr_interface) {
+void VisionOSControllerTracking::initialize(XRServer *p_xr_server, VisionOSXRInterface *p_xr_interface,
+		VisionOSSharedController &p_left_hand,
+		VisionOSSharedController &p_right_hand) {
 	generation++;
 	accessories = ar_accessories_create();
 
 	xr_interface = p_xr_interface;
+
+	left_shared_controller = &p_left_hand;
+	right_shared_controller = &p_right_hand;
 
 	// Scan existing controllers
 	for (GCController *controller in GCController.controllers) {
@@ -49,18 +54,6 @@ void VisionOSControllerTracking::initialize(XRServer *p_xr_server, VisionOSXRInt
 	}
 
 	setup_controller_notifications();
-
-	left_controller_tracker.instantiate();
-	left_controller_tracker->set_tracker_hand(XRPositionalTracker::TRACKER_HAND_LEFT);
-	left_controller_tracker->set_tracker_name("left_hand");
-	left_controller_tracker->set_tracker_desc("visionOS Left Controller");
-	p_xr_server->add_tracker(left_controller_tracker);
-
-	right_controller_tracker.instantiate();
-	right_controller_tracker->set_tracker_hand(XRPositionalTracker::TRACKER_HAND_RIGHT);
-	right_controller_tracker->set_tracker_name("right_hand");
-	right_controller_tracker->set_tracker_desc("visionOS Right Controller");
-	p_xr_server->add_tracker(right_controller_tracker);
 
 	ar_accessory_tracking_configuration_t accessory_tracking_configuration = ar_accessory_tracking_configuration_create();
 	ar_accessory_tracking_configuration_set_accessories(accessory_tracking_configuration, accessories);
@@ -73,16 +66,8 @@ void VisionOSControllerTracking::uninitialize(XRServer *p_xr_server) {
 		accessory_tracking_provider = nullptr;
 	}
 
-	if (p_xr_server != nullptr) {
-		if (left_controller_tracker.is_valid()) {
-			p_xr_server->remove_tracker(left_controller_tracker);
-			left_controller_tracker.unref();
-		}
-		if (right_controller_tracker.is_valid()) {
-			p_xr_server->remove_tracker(right_controller_tracker);
-			right_controller_tracker.unref();
-		}
-	}
+	left_shared_controller = nullptr;
+	right_shared_controller = nullptr;
 
 	left_controller_anchor = nullptr;
 	right_controller_anchor = nullptr;
@@ -115,15 +100,15 @@ void VisionOSControllerTracking::init_for_controller(GCController *p_controller)
 					if (!ObjectDB::get_instance(owner_id)) {
 						return;
 					}
-					if (generation != request_generation || ![GCController.controllers containsObject:p_controller] || left_controller_tracker.is_null() || right_controller_tracker.is_null()) {
+					if (generation != request_generation || ![GCController.controllers containsObject:p_controller] || left_shared_controller == nullptr || right_shared_controller == nullptr) {
 						return;
 					}
 					ar_accessory_chirality_t chirality = ar_accessory_get_inherent_chirality(accessory);
 					if (chirality == ar_accessory_chirality_left) {
 						left_gc_controller = p_controller;
 						left_controller_accessory = accessory;
-						reset_controller_tracker_data(left_controller_tracker);
-						left_controller_tracker->set_tracker_profile("visionos_accessory");
+						reset_controller_tracker_data(left_shared_controller->tracker);
+						left_shared_controller->tracker->set_tracker_profile("visionos_accessory");
 						if (left_gc_controller != nullptr && left_gc_controller.haptics != nullptr) {
 							left_haptic_engine = [left_gc_controller.haptics createEngineWithLocality:GCHapticsLocalityDefault];
 						}
@@ -131,8 +116,8 @@ void VisionOSControllerTracking::init_for_controller(GCController *p_controller)
 					} else if (chirality == ar_accessory_chirality_right) {
 						right_gc_controller = p_controller;
 						right_controller_accessory = accessory;
-						reset_controller_tracker_data(right_controller_tracker);
-						right_controller_tracker->set_tracker_profile("visionos_accessory");
+						reset_controller_tracker_data(right_shared_controller->tracker);
+						right_shared_controller->tracker->set_tracker_profile("visionos_accessory");
 						if (right_gc_controller != nullptr && right_gc_controller.haptics != nullptr) {
 							right_haptic_engine = [right_gc_controller.haptics createEngineWithLocality:GCHapticsLocalityDefault];
 						}
@@ -184,8 +169,8 @@ void VisionOSControllerTracking::handle_controller_disconnect(GCController *p_co
 		left_controller_anchor = nullptr;
 		left_gc_controller = nullptr;
 		left_haptic_engine = nullptr;
-		reset_controller_tracker_data(left_controller_tracker);
-		left_controller_tracker->set_tracker_profile("");
+		reset_controller_tracker_data(left_shared_controller->tracker);
+		left_shared_controller->tracker->set_tracker_profile("");
 		update_accessories_list();
 	} else if (right_gc_controller != nullptr && right_gc_controller == p_controller) {
 		if (right_controller_accessory != nullptr) {
@@ -195,8 +180,8 @@ void VisionOSControllerTracking::handle_controller_disconnect(GCController *p_co
 		right_controller_anchor = nullptr;
 		right_gc_controller = nullptr;
 		right_haptic_engine = nullptr;
-		reset_controller_tracker_data(right_controller_tracker);
-		right_controller_tracker->set_tracker_profile("");
+		reset_controller_tracker_data(right_shared_controller->tracker);
+		right_shared_controller->tracker->set_tracker_profile("");
 		update_accessories_list();
 	}
 }
@@ -350,24 +335,24 @@ void VisionOSControllerTracking::update_controller_trackers_from_arkit(CFTimeInt
 				ar_accessory_t accessory = ar_accessory_anchor_get_accessory(accessory_anchor);
 				ar_accessory_chirality_t chirality = ar_accessory_get_inherent_chirality(accessory);
 
-				if (chirality == ar_accessory_chirality_left && left_gc_controller != nullptr && !left_found) {
+				if (chirality == ar_accessory_chirality_left && left_gc_controller != nullptr && !left_found && !left_shared_controller->controlled_by_spatial_event) {
 					left_controller_anchor = accessory_anchor;
-					update_controller_from_anchor(left_controller_tracker, left_controller_anchor, left_gc_controller);
+					update_controller_from_anchor(left_shared_controller->tracker, left_controller_anchor, left_gc_controller);
 					left_found = true;
-				} else if (chirality == ar_accessory_chirality_right && right_gc_controller != nullptr && !right_found) {
+				} else if (chirality == ar_accessory_chirality_right && right_gc_controller != nullptr && !right_found && !right_shared_controller->controlled_by_spatial_event) {
 					right_controller_anchor = accessory_anchor;
-					update_controller_from_anchor(right_controller_tracker, right_controller_anchor, right_gc_controller);
+					update_controller_from_anchor(right_shared_controller->tracker, right_controller_anchor, right_gc_controller);
 					right_found = true;
 				}
 				return true;
 			});
 		}
-		// Do not invalidate the other hand's optical mirror.
-		if (left_gc_controller != nullptr && !left_found) {
-			reset_controller_tracker_data(left_controller_tracker);
+		// Do not invalidate the other hand's optical mirror, nor a hand a spatial event drives.
+		if (left_gc_controller != nullptr && !left_found && !left_shared_controller->controlled_by_spatial_event) {
+			reset_controller_tracker_data(left_shared_controller->tracker);
 		}
-		if (right_gc_controller != nullptr && !right_found) {
-			reset_controller_tracker_data(right_controller_tracker);
+		if (right_gc_controller != nullptr && !right_found && !right_shared_controller->controlled_by_spatial_event) {
+			reset_controller_tracker_data(right_shared_controller->tracker);
 		}
 	}
 }
@@ -376,10 +361,10 @@ void VisionOSControllerTracking::trigger_haptic_pulse(const String &p_action_nam
 	GCController *target_controller = nullptr;
 	CHHapticEngine *target_engine = nullptr;
 
-	if (p_tracker_name == left_controller_tracker->get_tracker_name()) {
+	if (left_shared_controller && left_shared_controller->tracker.is_valid() && p_tracker_name == left_shared_controller->tracker->get_tracker_name()) {
 		target_controller = left_gc_controller;
 		target_engine = left_haptic_engine;
-	} else if (p_tracker_name == right_controller_tracker->get_tracker_name()) {
+	} else if (right_shared_controller && right_shared_controller->tracker.is_valid() && p_tracker_name == right_shared_controller->tracker->get_tracker_name()) {
 		target_controller = right_gc_controller;
 		target_engine = right_haptic_engine;
 	}

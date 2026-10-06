@@ -40,6 +40,8 @@
 #include "visionos_scene_understanding.h"
 #include "visionos_spatial_events.h"
 
+#include "servers/xr/xr_controller_tracker.h"
+
 #include <memory>
 #include <vector>
 
@@ -142,6 +144,9 @@ private:
 
 	// Hand tracking
 	VisionOSHandTracking hands;
+
+	// `left_hand` and `right_hand`, driven by controllers, hand gestures and spatial events.
+	VisionOSSharedController left_hand, right_hand;
 
 	// Controller tracking
 	VisionOSControllerTracking controllers;

@@ -32,53 +32,45 @@
 
 #include "visionos_spatial_events.h"
 
+#include "visionos_tracking.h"
+
+#include "core/math/transform_3d.h"
+#include "core/math/vector3.h"
 #include "servers/xr/xr_controller_tracker.h"
 #include "servers/xr/xr_positional_tracker.h"
 #include "servers/xr/xr_server.h"
 
-#include <stdio.h>
+void VisionOSSpatialEventTracking::initialize(XRServer *p_xr_server,
+		VisionOSSharedController &p_left_hand,
+		VisionOSSharedController &p_right_hand) {
+	// Left hand
+	left_hand.controller = &p_left_hand;
+	left_hand.transform_correction = Transform3D(Vector3(-1, 0, 0), Vector3(0, 0, -1), Vector3(0, -1, 0), Vector3(0, 0, 0));
 
-void VisionOSSpatialEventTracking::initialize(XRServer *p_xr_server) {
-	for (size_t hand_index = 0; hand_index < 2; hand_index++) {
-		Hand &hand = hands[hand_index];
-		hand.tracker.instantiate();
-		hand.ray.instantiate();
+	// Right hand
+	right_hand.controller = &p_right_hand;
+	right_hand.transform_correction = Transform3D(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, +1, 0), Vector3(0, 0, 0));
 
-		if (hand_index == 0) {
-			hand.tracker->set_tracker_hand(XRPositionalTracker::TRACKER_HAND_LEFT);
-			hand.tracker->set_tracker_name("visionos/left_hand_pinch");
-			hand.tracker->set_tracker_desc("visionOS Left Hand Spatial Event");
-			hand.ray->set_tracker_name("visionos/left_hand_ray");
-			hand.ray->set_tracker_desc("visionOS Left Selection Ray");
-		} else {
-			hand.tracker->set_tracker_hand(XRPositionalTracker::TRACKER_HAND_RIGHT);
-			hand.tracker->set_tracker_name("visionos/right_hand_pinch");
-			hand.tracker->set_tracker_desc("visionOS Right Hand Spatial Event");
-			hand.ray->set_tracker_name("visionos/right_hand_ray");
-			hand.ray->set_tracker_desc("visionOS Right Selection Ray");
-		}
-		p_xr_server->add_tracker(hand.tracker);
-		p_xr_server->add_tracker(hand.ray);
-	}
+	// Eyes
+	eyes_ray.instantiate();
+	eyes_ray->set_tracker_name("/user/eyes_ext");
+	eyes_ray->set_tracker_desc("visionOS eyes selection ray");
+	p_xr_server->add_tracker(eyes_ray);
 }
-
-namespace {
-
-void uninitialize_tracker(Ref<XRControllerTracker> &p_tracker, XRServer *p_xr_server) {
-	if (p_tracker.is_valid()) {
-		p_xr_server->remove_tracker(p_tracker);
-		p_tracker.unref();
-	}
-}
-
-} // namespace
 
 void VisionOSSpatialEventTracking::uninitialize(XRServer *p_xr_server) {
-	if (p_xr_server) {
-		for (Hand &hand : hands) {
-			uninitialize_tracker(hand.tracker, p_xr_server);
-			uninitialize_tracker(hand.ray, p_xr_server);
+	if (p_xr_server && eyes_ray.is_valid()) {
+		p_xr_server->remove_tracker(eyes_ray);
+	}
+	eyes_ray.unref();
+
+	for (Hand *hand : { &left_hand, &right_hand }) {
+		if (hand->controller) {
+			hand->controller->controlled_by_spatial_event = false;
+			hand->controller->hand_trigger_released_by_spatial_event = false;
 		}
+		hand->controller = nullptr;
+		hand->ray_submitted = false;
 	}
 }
 
@@ -89,28 +81,38 @@ void VisionOSSpatialEventTracking::on_spatial_event(const VisionOSSpatialEvent &
 	Hand *hand = nullptr;
 	switch (p_event.chirality) {
 		case VisionOSSpatialEvent::Chirality::left:
-			hand = &hands[0];
+			hand = &left_hand;
 			break;
 		case VisionOSSpatialEvent::Chirality::right:
-			hand = &hands[1];
+			hand = &right_hand;
 			break;
 		default:
 			break;
 	}
 
 	// Updating the pose first and sending the input second.
-	if (hand) {
+	if (hand && hand->controller && hand->controller->tracker.is_valid() && eyes_ray.is_valid()) {
 		// Updating the ray.
-		if (active && p_event.has_ray) {
-			hand->ray->set_pose("default", p_event.ray, Vector3(), Vector3());
+		if (active) {
+			// Setting the ray pose on pinch.
+			if (p_event.has_ray && hand->ray_submitted == false) {
+				eyes_ray->set_pose("default", p_event.ray, Vector3(), Vector3());
+				hand->ray_submitted = true;
+			}
+		} else {
+			// Resetting the state on release (for the next pinch).
+			hand->ray_submitted = false;
 		}
 
-		// Updating the hand pose.
-		hand->tracker->set_pose("default", p_event.hand_pose, Vector3(), Vector3());
+		visionos_set_spatial_event_active(*hand->controller, active);
 
-		// Submitting input events.
-		hand->tracker->set_input("trigger_click", active);
-		hand->ray->set_input("trigger_click", active);
+		// Updating the hand pose.
+		Transform3D pose = p_event.hand_pose * hand->transform_correction;
+		hand->controller->tracker->set_pose("default", pose, Vector3(), Vector3());
+
+		// Submitting input events. It will send a signal that the game
+		// can receive, to handle input.
+		hand->controller->tracker->set_input("trigger_click", active);
 	}
 }
 
