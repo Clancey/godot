@@ -230,20 +230,33 @@ bool VisionOSXRInterface::initialize() {
 		xr_server->set_primary_interface(this);
 	}
 
+	// Shared `left_hand` and `right_hand` trackers, driven by controllers, hand
+	// gestures and spatial events.
+	left_hand.tracker.instantiate();
+	left_hand.tracker->set_tracker_hand(XRPositionalTracker::TRACKER_HAND_LEFT);
+	left_hand.tracker->set_tracker_name("left_hand");
+	left_hand.tracker->set_tracker_desc("visionOS left controller and spatial event");
+	xr_server->add_tracker(left_hand.tracker);
+	right_hand.tracker.instantiate();
+	right_hand.tracker->set_tracker_hand(XRPositionalTracker::TRACKER_HAND_RIGHT);
+	right_hand.tracker->set_tracker_name("right_hand");
+	right_hand.tracker->set_tracker_desc("visionOS right controller and spatial event");
+	xr_server->add_tracker(right_hand.tracker);
+
 	// Hand tracking
 	if (hands.enabled) {
-		hands.initialize(xr_server, controllers.enabled);
+		hands.initialize(xr_server);
 	}
 
 	// Controllers
 	if (controllers.enabled) {
-		controllers.initialize(xr_server, this);
+		controllers.initialize(xr_server, this, left_hand, right_hand);
 	}
 
 	// Scene understanding
 	scene_understanding.initialize(ar_session, cs.world_tracking_provider);
 
-	spatial_events.initialize(xr_server);
+	spatial_events.initialize(xr_server, left_hand, right_hand);
 
 	if (face.enabled) {
 		face.initialize(xr_server);
@@ -291,6 +304,18 @@ bool VisionOSXRInterface::CompositorServicesData::initialize(XRServer *p_xr_serv
 	return true;
 }
 
+namespace {
+
+template <typename TrackerType>
+void uninitialize_tracker(Ref<TrackerType> &p_tracker, XRServer *p_xr_server) {
+	if (p_tracker.is_valid()) {
+		p_xr_server->remove_tracker(p_tracker);
+		p_tracker.unref();
+	}
+}
+
+} // namespace
+
 void VisionOSXRInterface::uninitialize() {
 	if (!initialized) {
 		return;
@@ -304,27 +329,20 @@ void VisionOSXRInterface::uninitialize() {
 	if (xr_server != nullptr) {
 		scene_understanding.uninitialize();
 
+		uninitialize_tracker(left_hand.tracker, xr_server);
+		uninitialize_tracker(right_hand.tracker, xr_server);
+
 		if (controllers.enabled) {
 			controllers.uninitialize(xr_server);
 		}
 
 		if (hands.enabled) {
-			if (hands.left_hand_tracker.is_valid()) {
-				xr_server->remove_tracker(hands.left_hand_tracker);
-				hands.left_hand_tracker.unref();
-			}
-			if (hands.right_hand_tracker.is_valid()) {
-				xr_server->remove_tracker(hands.right_hand_tracker);
-				hands.right_hand_tracker.unref();
-			}
-			hands.uninitialize(xr_server);
+			uninitialize_tracker(hands.left_hand_tracker, xr_server);
+			uninitialize_tracker(hands.right_hand_tracker, xr_server);
 		}
 
 		if (cs.enabled) {
-			if (cs.head_tracker.is_valid()) {
-				xr_server->remove_tracker(cs.head_tracker);
-				cs.head_tracker.unref();
-			}
+			uninitialize_tracker(cs.head_tracker, xr_server);
 
 			if (xr_server->get_primary_interface() == this) {
 				// no longer our primary interface
@@ -698,6 +716,9 @@ void VisionOSXRInterface::run_ar_session() {
 }
 
 void VisionOSXRInterface::on_spatial_event(const VisionOSSpatialEvent &p_event) {
+	if (!initialized) {
+		return;
+	}
 	spatial_events.on_spatial_event(p_event);
 }
 
@@ -761,7 +782,7 @@ void VisionOSXRInterface::process() {
 		RenderingServer::get_singleton()->call_on_render_thread(callable_mp(&rt, &RenderThread::select_frame_geometry).bind(serial));
 
 		if (!geometry) {
-			visionos_reset_input_tracking(hands, controllers);
+			visionos_reset_input_tracking(hands, controllers, left_hand, right_hand);
 			return;
 		}
 	}
@@ -772,19 +793,14 @@ void VisionOSXRInterface::process() {
 		if (hands.active()) {
 			hands.update_hand_trackers_from_arkit(trackable_anchor_time);
 
-			// Mirror hand gestures onto the controller-style trackers so
+			// Mirror hand gestures onto the shared controller trackers so
 			// XRController3D based gameplay works hands-free. A hand with a
 			// physical accessory attached is left to the accessory.
-			if (controllers.enabled) {
-				if (controllers.left_gc_controller == nullptr) {
-					hands.publish_gestures(VisionOSHandTracking::HAND_LEFT, controllers.left_controller_tracker);
-				}
-				if (controllers.right_gc_controller == nullptr) {
-					hands.publish_gestures(VisionOSHandTracking::HAND_RIGHT, controllers.right_controller_tracker);
-				}
-			} else {
-				hands.publish_gestures(VisionOSHandTracking::HAND_LEFT, hands.left_hand_controller_tracker);
-				hands.publish_gestures(VisionOSHandTracking::HAND_RIGHT, hands.right_hand_controller_tracker);
+			if (!controllers.enabled || controllers.left_gc_controller == nullptr) {
+				hands.publish_gestures(VisionOSHandTracking::HAND_LEFT, left_hand);
+			}
+			if (!controllers.enabled || controllers.right_gc_controller == nullptr) {
+				hands.publish_gestures(VisionOSHandTracking::HAND_RIGHT, right_hand);
 			}
 		}
 

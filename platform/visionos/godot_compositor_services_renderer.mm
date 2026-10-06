@@ -35,6 +35,7 @@
 
 #include "core/math/transform_3d.h"
 #include "core/math/vector3.h"
+#include "core/templates/vector.h"
 #import "drivers/apple_embedded/os_apple_embedded.h"
 
 #include "modules/modules_enabled.gen.h"

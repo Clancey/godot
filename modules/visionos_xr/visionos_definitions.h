@@ -76,4 +76,17 @@ enum class VisionOSAuthorizationStatus {
 	DENIED,
 };
 
+// Trackers used by VisionOSControllerTracking, VisionOSHandTracking and VisionOSSpatialEventTracking.
+struct VisionOSSharedController {
+	Ref<XRControllerTracker> tracker;
+
+	// Spatial Events override controllers, when active.
+	bool controlled_by_spatial_event = false;
+
+	// Set when a spatial event releases `trigger_click` while the pinch derived
+	// from hand tracking is still held, so the slower optical release does not
+	// press the trigger a second time.
+	bool hand_trigger_released_by_spatial_event = false;
+};
+
 #endif // VISIONOS_ENABLED
