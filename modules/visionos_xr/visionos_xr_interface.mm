@@ -119,6 +119,14 @@ void VisionOSXRInterface::clear_marker_reference_images() {
 	scene_understanding.clear_marker_reference_images();
 }
 
+Dictionary VisionOSXRInterface::replace_marker_reference_images(const Array &p_images) {
+	return scene_understanding.replace_marker_reference_images(p_images);
+}
+
+Dictionary VisionOSXRInterface::get_image_tracking_status() {
+	return scene_understanding.get_image_tracking_status();
+}
+
 int VisionOSXRInterface::get_marker_reference_image_count() const {
 	return scene_understanding.get_marker_reference_image_count();
 }
@@ -141,6 +149,8 @@ void VisionOSXRInterface::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_image_tracking_supported"), &VisionOSXRInterface::is_image_tracking_supported);
 	ClassDB::bind_method(D_METHOD("add_marker_reference_image", "name", "image", "physical_width"), &VisionOSXRInterface::add_marker_reference_image);
 	ClassDB::bind_method(D_METHOD("clear_marker_reference_images"), &VisionOSXRInterface::clear_marker_reference_images);
+	ClassDB::bind_method(D_METHOD("replace_marker_reference_images", "images"), &VisionOSXRInterface::replace_marker_reference_images);
+	ClassDB::bind_method(D_METHOD("get_image_tracking_status"), &VisionOSXRInterface::get_image_tracking_status);
 	ClassDB::bind_method(D_METHOD("get_marker_reference_image_count"), &VisionOSXRInterface::get_marker_reference_image_count);
 
 	BIND_ENUM_CONSTANT(IMMERSION_STYLE_FULL);
@@ -188,6 +198,7 @@ bool VisionOSXRInterface::is_initialized() const {
 
 bool VisionOSXRInterface::initialize() {
 	ERR_FAIL_COND_V_MSG(initialized, true, "VisionOSXRInterface already initialized.");
+	authorization_revision++;
 
 	XRServer *xr_server = XRServer::get_singleton();
 	ERR_FAIL_NULL_V(xr_server, false);
@@ -263,6 +274,7 @@ bool VisionOSXRInterface::initialize() {
 	}
 
 	// Running the ARKit session for head tracking, at first
+	install_authorization_handler();
 	run_ar_session();
 
 	// Check the authorizations asynchronously
@@ -319,6 +331,12 @@ void uninitialize_tracker(Ref<TrackerType> &p_tracker, XRServer *p_xr_server) {
 void VisionOSXRInterface::uninitialize() {
 	if (!initialized) {
 		return;
+	}
+	authorization_revision++;
+	if (ar_session != nullptr) {
+		visionos_tracking_access().perform([&] {
+			ar_session_set_authorization_update_handler(ar_session, nullptr, nullptr);
+		});
 	}
 
 	if (cs.enabled && rendering_server) {
@@ -635,18 +653,80 @@ void VisionOSXRInterface::update_authorizations_async() {
 
 	Ref<VisionOSXRInterface> ref_this = this;
 	ar_session_t request_session = ar_session;
+	const uint64_t revision = authorization_revision;
+	const uint64_t world_updates = world_authorization_updates;
 	ar_session_request_authorization(ar_session, static_cast<ar_authorization_type_t>(types), ^(ar_authorization_results_t authorization_results, ar_error_t _Nullable error) {
 		visionos_dispatch_to_engine(^(void) {
-			ERR_FAIL_COND_MSG(error != nullptr, "Could not query ARKit authorizations.");
-
-			if (ref_this->is_initialized() && ref_this->ar_session == request_session) {
-				ref_this->update_from_authorizations(authorization_results);
+			if (ref_this->is_initialized() && ref_this->ar_session == request_session && ref_this->authorization_revision == revision) {
+				if (error != nullptr) {
+					if (ref_this->world_authorization_updates == world_updates) {
+						ref_this->scene_understanding.set_image_tracking_authorization_error("Could not query ARKit authorizations.");
+					}
+					ERR_PRINT("Could not query ARKit authorizations.");
+					return;
+				}
+				ref_this->update_from_authorizations(authorization_results, world_updates);
 			}
 		});
 	});
 }
 
-void VisionOSXRInterface::update_from_authorizations(ar_authorization_results_t p_authorization_results) {
+void VisionOSXRInterface::install_authorization_handler() {
+	const ObjectID instance = get_instance_id();
+	const uint64_t revision = authorization_revision;
+	visionos_tracking_access().perform([&] {
+		const ObjectID block_instance = instance;
+		const uint64_t block_revision = revision;
+		ar_session_set_authorization_update_handler(ar_session, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^(ar_authorization_result_t result) {
+			const int type = ar_authorization_result_get_authorization_type(result);
+			const VisionOSAuthorizationStatus status = convert(ar_authorization_result_get_status(result));
+			visionos_dispatch_to_engine(^(void) {
+				auto *interface = Object::cast_to<VisionOSXRInterface>(ObjectDB::get_instance(block_instance));
+				if (interface == nullptr || !interface->initialized || interface->authorization_revision != block_revision) {
+					return;
+				}
+				if (type == ar_authorization_type_world_sensing) {
+					interface->world_authorization_updates++;
+				}
+				if (interface->apply_authorization(type, status)) {
+					interface->run_ar_session();
+				}
+			});
+		});
+	});
+}
+
+bool VisionOSXRInterface::apply_authorization(int p_type, VisionOSAuthorizationStatus p_status) {
+	VisionOSAuthorizationStatus previous;
+	switch (p_type) {
+		case ar_authorization_type_hand_tracking:
+			previous = hands.authorization;
+			hands.authorization = p_status;
+			if (p_status == VisionOSAuthorizationStatus::DENIED) {
+				ERR_PRINT("Hand tracking not authorized. Enable it in `Settings > Privacy` and restart the app.");
+			}
+			break;
+		case ar_authorization_type_accessory_tracking:
+			previous = controllers.authorization;
+			controllers.authorization = p_status;
+			if (p_status == VisionOSAuthorizationStatus::DENIED) {
+				ERR_PRINT("Controller tracking not authorized. Enable it in `Settings > Privacy` and restart the app.");
+			}
+			break;
+		case ar_authorization_type_world_sensing:
+			previous = scene_understanding.authorization;
+			scene_understanding.set_image_tracking_authorization(p_status);
+			if (p_status == VisionOSAuthorizationStatus::DENIED) {
+				ERR_PRINT("World sensing not authorized. Enable it in `Settings > Privacy` and restart the app.");
+			}
+			break;
+		default:
+			return false;
+	}
+	return previous != p_status;
+}
+
+void VisionOSXRInterface::update_from_authorizations(ar_authorization_results_t p_authorization_results, uint64_t p_world_updates) {
 	VisionOSAuthorizationStatus previous_hands = hands.authorization;
 	VisionOSAuthorizationStatus previous_controllers = controllers.authorization;
 	VisionOSAuthorizationStatus previous_scene_understanding = scene_understanding.authorization;
@@ -655,27 +735,8 @@ void VisionOSXRInterface::update_from_authorizations(ar_authorization_results_t 
 		ar_authorization_type_t type = ar_authorization_result_get_authorization_type(authorization_result);
 		ar_authorization_status_t status = ar_authorization_result_get_status(authorization_result);
 
-		switch (type) {
-			case ar_authorization_type_hand_tracking:
-				hands.authorization = convert(status);
-				if (status == ar_authorization_status_denied) {
-					ERR_PRINT("Hand tracking not authorized. Enable it in `Settings > Privacy` and restart the app.");
-				}
-				break;
-			case ar_authorization_type_accessory_tracking:
-				controllers.authorization = convert(status);
-				if (status == ar_authorization_status_denied) {
-					ERR_PRINT("Controller tracking not authorized. Enable it in `Settings > Privacy` and restart the app.");
-				}
-				break;
-			case ar_authorization_type_world_sensing:
-				scene_understanding.authorization = convert(status);
-				if (status == ar_authorization_status_denied) {
-					ERR_PRINT("World sensing not authorized. Enable it in `Settings > Privacy` and restart the app.");
-				}
-				break;
-			default:
-				break;
+		if (type != ar_authorization_type_world_sensing || p_world_updates == world_authorization_updates) {
+			apply_authorization(type, convert(status));
 		}
 
 		return true; // continue with the enumeration

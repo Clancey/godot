@@ -32,7 +32,11 @@
 
 #ifdef VISIONOS_ENABLED
 
+#include "visionos_image_tracking_store.h"
+
 #include "servers/xr/xr_positional_tracker.h"
+
+#include <memory>
 
 // A registered reference image (for example a printed QR code) that ARKit
 // found in the user's surroundings. The pose follows the OpenXR spatial marker
@@ -61,6 +65,8 @@ public:
 
 	void set_marker_tracked(bool p_tracked);
 	bool get_marker_tracked() const;
+	void set_observation_source(const std::shared_ptr<VisionOSImageTrackingStore> &p_store, uint64_t p_generation);
+	Dictionary get_marker_observation() const;
 
 protected:
 	static void _bind_methods();
@@ -71,6 +77,8 @@ private:
 	Vector2 physical_size;
 	float estimated_scale_factor = 1.0;
 	bool tracked = false;
+	std::shared_ptr<VisionOSImageTrackingStore> observation_store;
+	uint64_t observation_generation = 0;
 };
 
 #endif // VISIONOS_ENABLED

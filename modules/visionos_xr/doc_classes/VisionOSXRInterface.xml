@@ -37,7 +37,8 @@
 			<param index="1" name="image" type="Image" />
 			<param index="2" name="physical_width" type="float" />
 			<description>
-				Registers [param image] (for example a rendered QR code) as a reference image ARKit should look for, with its printed width in meters. When found, a [VisionOSMarkerTracker] is added to the [XRServer] whose [member VisionOSMarkerTracker.marker_data] is [param name]. Requires the [code]xr/visionos/scene_understanding/enable_image_tracking[/code] project setting and world-sensing authorization. Images may be registered before or after initialization; each change rebuilds the image tracking provider and re-runs the ARKit session. Returns [code]false[/code] if the image is empty, the width is not positive, or [param name] is already registered.
+				Adds [param image] (for example a rendered QR code) to the requested reference set, with its printed width in meters. When found, a [VisionOSMarkerTracker] is added to the [XRServer] whose [member VisionOSMarkerTracker.marker_data] is [param name]. Requires the [code]xr/visionos/scene_understanding/enable_image_tracking[/code] project setting and world-sensing authorization. Images may be staged before initialization. Returns [code]false[/code] for invalid input or a failed native replacement, retaining the previous set. A [code]true[/code] return does not mean the image provider is running.
+				Use [method replace_marker_reference_images] to replace multiple images in one transaction instead of repeatedly rebuilding the image provider. Check [method get_image_tracking_status] before accepting observations.
 			</description>
 		</method>
 		<method name="clear_marker_reference_images">
@@ -54,10 +55,22 @@
 				Creates an ARKit world anchor at [param transform] and returns its tracker. Set [param shared] to [code]true[/code] to share the anchor with nearby participants when [method is_anchor_sharing_available] returns [code]true[/code]. Requires the [code]xr/visionos/scene_understanding/enable_world_anchors[/code] project setting.
 			</description>
 		</method>
+		<method name="get_image_tracking_status">
+			<return type="Dictionary" />
+			<description>
+				Returns image-provider status, independently of XR interface initialization. The dictionary contains:
+				[code]supported[/code] and [code]enabled[/code] ([bool]); [code]authorization[/code] ([String]: [code]"not_determined"[/code], [code]"allowed"[/code], or [code]"denied"[/code]); [code]authorization_error[/code] ([int]) and [code]authorization_error_message[/code] ([String]).
+				[code]provider_state[/code] ([String]: [code]"absent"[/code], [code]"initialized"[/code], [code]"running"[/code], [code]"paused"[/code], [code]"stopped"[/code], or [code]"failed"[/code]); [code]running[/code] ([bool]) is true only when the actual current image provider is running, the set is registered, image tracking is supported and enabled, and world sensing is authorized without a query error.
+				[code]reference_revision[/code] ([int]) identifies the last accepted reference set. [code]registration_state[/code] ([String]) is [code]"staged"[/code], [code]"registered"[/code], [code]"failed"[/code], or [code]"cleared"[/code]. [code]registered_names[/code] ([PackedStringArray]) is nonempty only for a completely registered set. Registration means all reference images were added to a native configuration and its provider was created, not that an image has been detected or that the provider is running.
+				[code]generation[/code] ([int]) identifies the observation epoch. Replacement, provider-state changes, authorization changes and teardown invalidate old observations. Restarting the provider does not change [code]reference_revision[/code]. [code]superseded_reference_revision[/code] ([int], or zero) identifies the staged set superseded by the last accepted replacement.
+				[code]per_image_results[/code] ([Array] of dictionaries with [code]name[/code], [code]error[/code], and [code]error_message[/code]) describes the accepted set. [code]error[/code] ([int], zero on no error) and [code]error_message[/code] ([String]) report native failures, authorization query errors, unsupported or disabled tracking, and denied authorization. A provider failure's native error is retained instead of being erased by a subsequent stopped-state poll.
+				Require a matching registered name and reference revision, [code]authorization == "allowed"[/code], [code]running == true[/code], and a fresh, tracked observation of the same generation before accepting placement. Polling does not create new observations.
+			</description>
+		</method>
 		<method name="get_marker_reference_image_count" qualifiers="const">
 			<return type="int" />
 			<description>
-				Returns the number of registered marker reference images.
+				Returns the number of requested marker reference images, including staged images. This is not a count of successful ARKit registrations; use [method get_image_tracking_status] for that.
 			</description>
 		</method>
 		<method name="get_spatial_anchor_capability" qualifiers="const">
@@ -83,6 +96,17 @@
 			<param index="0" name="anchor" type="VisionOSAnchorTracker" />
 			<description>
 				Removes an anchor created with [method create_spatial_anchor] from ARKit and the [XRServer].
+			</description>
+		</method>
+		<method name="replace_marker_reference_images">
+			<return type="Dictionary" />
+			<param index="0" name="images" type="Array" />
+			<description>
+				Transactionally replaces the requested reference set. Each entry must be a [Dictionary] containing a unique nonempty [code]name[/code] ([String]), nonempty [code]image[/code] ([Image]), and finite positive [code]physical_width_m[/code] ([float] or [int]). Supply the exact generated reference image and the physical width of the entire printed image, including its quiet zone if present, not just the inner QR symbol. Pixel data is copied so later caller edits cannot change a staged reference.
+				The result contains [code]accepted[/code] ([bool]), [code]reference_revision[/code] ([int]), [code]error[/code] ([int]), [code]error_message[/code] ([String]), [code]per_image_results[/code] ([Array] of dictionaries with [code]name[/code], [code]error[/code], and [code]error_message[/code]), and [code]superseded_reference_revision[/code] ([int], or zero). An accepted result also contains [code]registration_state[/code] ([String]).
+				Before initialization or while image tracking is disabled, a valid set is accepted as [code]"staged"[/code], not registered. Native conversion and provider creation can still fail at startup; inspect [method get_image_tracking_status]. Replacing a staged set explicitly supersedes its revision. An empty array clears the set and invalidates its observations.
+				When the native session is initialized and image tracking is enabled, every reference is converted and added to a candidate configuration and exactly one candidate provider is created before committing. Duplicate images rejected by ARKit, conversion errors, and provider-creation failures reject the entire replacement, leaving the previous provider, reference revision and observations intact. Per-image success alone never acknowledges the whole transaction. A rejected request's error is returned here; status continues to describe the retained set.
+				A successful live replacement invalidates old trackers and schedules a shared ARKit session reconfiguration. The world, hand and accessory provider objects are reused; interruption-free hardware tracking during reconfiguration is not guaranteed. Requests in one engine iteration coalesce into one session run.
 			</description>
 		</method>
 	</methods>

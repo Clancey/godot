@@ -77,6 +77,10 @@ public:
 	// before or after the session starts; changes rebuild the provider.
 	bool add_marker_reference_image(const String &p_name, const Ref<Image> &p_image, float p_physical_width);
 	void clear_marker_reference_images();
+	Dictionary replace_marker_reference_images(const Array &p_images);
+	Dictionary get_image_tracking_status();
+	void set_image_tracking_authorization(VisionOSAuthorizationStatus p_status);
+	void set_image_tracking_authorization_error(const String &p_message);
 	int get_marker_reference_image_count() const { return reference_images.size(); }
 	// True once after the provider set changed and the ARKit session must be re-run.
 	bool consume_providers_changed();
@@ -163,27 +167,18 @@ private:
 		Ref<Image> image;
 		float physical_width = 0;
 	};
-	struct MarkerUpdate {
-		enum Type { ADDED,
-			UPDATED,
-			REMOVED };
-		Type type;
-		uint64_t anchor_id_hash;
-		String anchor_uuid_str;
-		String name;
-		Transform3D transform;
-		Vector2 physical_size;
-		float estimated_scale_factor = 1.0;
-		bool tracked = false;
-	};
-
 	LocalVector<ReferenceImage> reference_images;
 	bool providers_changed = false;
-	uint64_t image_tracking_revision = 0;
-	Mutex marker_mutex;
-	LocalVector<MarkerUpdate> pending_marker_updates;
-	HashMap<uint64_t, Ref<VisionOSMarkerTracker>> marker_trackers;
+	std::shared_ptr<VisionOSImageTrackingStore> image_store = std::make_shared<VisionOSImageTrackingStore>();
+	HashMap<String, Ref<VisionOSMarkerTracker>> marker_trackers;
+	uint64_t published_image_generation = 0;
+	uint64_t published_image_sequence = 0;
+	uint64_t image_handler_generation = 0;
 
+	ar_image_tracking_provider_t build_image_provider(const LocalVector<ReferenceImage> &p_images, std::vector<VisionOSImageTrackingStore::ReferenceResult> &r_results, Error &r_code, String &r_error);
+	void install_image_handler();
+	void sample_image_provider_state();
+	void clear_marker_trackers();
 	void setup_image_tracking();
 	void teardown_image_tracking();
 	void process_marker_updates();
@@ -198,8 +193,10 @@ private:
 	uint64_t initial_enumeration_request = 0;
 	bool enumeration_for_caller = false;
 	bool anchor_lifecycle_installed = false;
+	uint64_t anchor_observer = 0;
 	uint64_t anchor_provider_revision = 0;
 	void setup_anchor_lifecycle();
+	void install_provider_state_handler();
 	uint64_t submit_anchor_enumeration(bool p_internal);
 	bool activate_world_anchors();
 

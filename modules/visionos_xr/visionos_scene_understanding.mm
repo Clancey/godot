@@ -38,6 +38,7 @@
 
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
+#include "core/os/os.h"
 #include "servers/xr/xr_server.h"
 
 #import <ARKit/image_tracking.h>
@@ -80,12 +81,14 @@ void VisionOSSceneUnderstanding::configure_from_project_settings() {
 	scene_reconstruction_enabled = GLOBAL_GET("xr/visionos/scene_understanding/enable_scene_reconstruction");
 	world_anchors_enabled = GLOBAL_GET("xr/visionos/scene_understanding/enable_world_anchors");
 	image_tracking_enabled = GLOBAL_GET("xr/visionos/scene_understanding/enable_image_tracking");
+	image_store->configure(is_image_tracking_supported(), image_tracking_enabled);
 }
 
 void VisionOSSceneUnderstanding::initialize(ar_session_t p_session, ar_world_tracking_provider_t p_world_tracking_provider) {
 	lifecycle_revision++;
 	ar_session = p_session;
 	world_tracking_provider = p_world_tracking_provider;
+	anchor_observer = anchor_store->watch_provider();
 
 	if (plane_detection_enabled) {
 		setup_plane_detection();
@@ -100,6 +103,7 @@ void VisionOSSceneUnderstanding::initialize(ar_session_t p_session, ar_world_tra
 	if (world_anchors_enabled && is_world_anchor_supported()) {
 		setup_anchor_lifecycle();
 	}
+	install_provider_state_handler();
 }
 
 void VisionOSSceneUnderstanding::uninitialize() {
@@ -116,7 +120,7 @@ void VisionOSSceneUnderstanding::uninitialize() {
 	teardown_image_tracking();
 	teardown_world_anchors();
 	anchor_store->unwatch_provider();
-	if (anchor_lifecycle_installed && ar_session != nullptr) {
+	if (ar_session != nullptr) {
 		visionos_tracking_access().perform([&] {
 			ar_session_set_data_provider_state_change_handler(ar_session, nullptr, nullptr);
 		});
@@ -134,7 +138,7 @@ void VisionOSSceneUnderstanding::uninitialize() {
 		for (const KeyValue<uint64_t, Ref<VisionOSMeshTracker>> &kv : mesh_trackers) {
 			xr_server->remove_tracker(kv.value);
 		}
-		for (const KeyValue<uint64_t, Ref<VisionOSMarkerTracker>> &kv : marker_trackers) {
+		for (const KeyValue<String, Ref<VisionOSMarkerTracker>> &kv : marker_trackers) {
 			kv.value->invalidate_pose(SNAME("default"));
 			xr_server->remove_tracker(kv.value);
 		}
@@ -160,11 +164,7 @@ void VisionOSSceneUnderstanding::uninitialize() {
 		MutexLock lock(mesh_mutex);
 		pending_mesh_updates.clear();
 	}
-	{
-		MutexLock lock(marker_mutex);
-		pending_marker_updates.clear();
-	}
-
+	authorization = VisionOSAuthorizationStatus::NOT_DETERMINED;
 	ar_session = nullptr;
 	world_tracking_provider = nullptr;
 	plane_detection_provider = nullptr;
@@ -188,10 +188,11 @@ void VisionOSSceneUnderstanding::add_providers_to(ar_data_providers_t p_data_pro
 }
 
 void VisionOSSceneUnderstanding::process() {
+	sample_image_provider_state();
+	process_marker_updates();
 	if (active()) {
 		process_plane_updates();
 		process_mesh_updates();
-		process_marker_updates();
 	}
 	process_anchor_updates();
 	if (VisionOSSpatialAnchorCapability::get_singleton()) {
@@ -202,11 +203,6 @@ void VisionOSSceneUnderstanding::process() {
 // ============================================================================
 // Image (marker) tracking
 // ============================================================================
-
-// ARKit image anchors lie in their XZ plane with +Y out of the image and -Z
-// towards its top edge. Rotate into the OpenXR spatial marker convention used
-// by every other marker source: +X right, +Y top, +Z out of the face.
-static const Basis _arkit_image_to_marker = Basis(Vector3(1, 0, 0), -Math::PI / 2.0);
 
 static ar_reference_image_t _create_reference_image(const Ref<Image> &p_image, float p_physical_width) {
 	Ref<Image> gray = p_image->duplicate();
@@ -219,12 +215,18 @@ static ar_reference_image_t _create_reference_image(const Ref<Image> &p_image, f
 	PackedByteArray pixels = gray->get_data();
 
 	CFDataRef data = CFDataCreate(kCFAllocatorDefault, pixels.ptr(), pixels.size());
+	ERR_FAIL_NULL_V_MSG(data, nullptr, "Cannot allocate marker reference image data.");
 	CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
+	CFRelease(data);
+	ERR_FAIL_NULL_V_MSG(provider, nullptr, "Cannot allocate marker reference image data provider.");
 	CGColorSpaceRef color_space = CGColorSpaceCreateDeviceGray();
+	if (color_space == nullptr) {
+		CGDataProviderRelease(provider);
+		ERR_FAIL_V_MSG(nullptr, "Cannot allocate marker reference image color space.");
+	}
 	CGImageRef cg_image = CGImageCreate(width, height, 8, 8, width, color_space, kCGImageAlphaNone, provider, nullptr, false, kCGRenderingIntentDefault);
 	CGColorSpaceRelease(color_space);
 	CGDataProviderRelease(provider);
-	CFRelease(data);
 	ERR_FAIL_NULL_V_MSG(cg_image, nullptr, "Cannot create a CGImage for a marker reference image.");
 
 	ar_reference_image_t reference = ar_reference_image_create_from_cgimage(cg_image, kCGImagePropertyOrientationUp, p_physical_width);
@@ -238,178 +240,428 @@ bool VisionOSSceneUnderstanding::is_image_tracking_supported() const {
 
 bool VisionOSSceneUnderstanding::add_marker_reference_image(const String &p_name, const Ref<Image> &p_image, float p_physical_width) {
 	ERR_FAIL_COND_V_MSG(p_image.is_null() || p_image->is_empty(), false, "Marker reference image is empty.");
-	ERR_FAIL_COND_V_MSG(p_physical_width <= 0, false, "Marker reference image needs a positive physical width in meters.");
+	ERR_FAIL_COND_V_MSG(!Math::is_finite(p_physical_width) || p_physical_width <= 0, false, "Marker reference image needs a finite positive physical width in meters.");
 	ERR_FAIL_COND_V_MSG(p_name.is_empty(), false, "Marker reference image needs a name; it is reported as the tracker's marker_data.");
+	Array images;
 	for (const ReferenceImage &existing : reference_images) {
 		ERR_FAIL_COND_V_MSG(existing.name == p_name, false, "Marker reference image \"" + p_name + "\" is already registered.");
+		Dictionary entry;
+		entry["name"] = existing.name;
+		entry["image"] = existing.image;
+		entry["physical_width_m"] = existing.physical_width;
+		images.push_back(entry);
 	}
-	reference_images.push_back({ p_name, p_image, p_physical_width });
-	if (image_tracking_enabled && ar_session != nullptr) {
-		setup_image_tracking();
+	Dictionary entry;
+	entry["name"] = p_name;
+	entry["image"] = p_image;
+	entry["physical_width_m"] = p_physical_width;
+	images.push_back(entry);
+	const Dictionary result = replace_marker_reference_images(images);
+	if (!(bool)result["accepted"]) {
+		ERR_PRINT(result["error_message"]);
 	}
-	return true;
+	return result["accepted"];
 }
 
 void VisionOSSceneUnderstanding::clear_marker_reference_images() {
-	reference_images.clear();
-	if (image_tracking_enabled && ar_session != nullptr) {
-		setup_image_tracking();
-	}
+	replace_marker_reference_images(Array());
 }
 
 bool VisionOSSceneUnderstanding::consume_providers_changed() {
-	bool changed = providers_changed;
+	const bool changed = providers_changed;
 	providers_changed = false;
 	return changed;
 }
 
-void VisionOSSceneUnderstanding::setup_image_tracking() {
-	teardown_image_tracking();
-	providers_changed = true;
+static VisionOSImageTrackingStore::ProviderState image_provider_state(ar_data_provider_state_t p_state) {
+	using State = VisionOSImageTrackingStore::ProviderState;
+	switch (p_state) {
+		case ar_data_provider_state_initialized:
+			return State::INITIALIZED;
+		case ar_data_provider_state_running:
+			return State::RUNNING;
+		case ar_data_provider_state_paused:
+			return State::PAUSED;
+		case ar_data_provider_state_stopped:
+			return State::STOPPED;
+	}
+	return State::FAILED;
+}
 
-	if (!ar_image_tracking_provider_is_supported()) {
-		print_verbose("visionOS: Image tracking is not supported on this device.");
+void VisionOSSceneUnderstanding::sample_image_provider_state() {
+	image_store->configure(is_image_tracking_supported(), ar_session ? image_tracking_enabled : (bool)GLOBAL_GET("xr/visionos/scene_understanding/enable_image_tracking"));
+	if (image_tracking_provider == nullptr) {
 		return;
 	}
-	if (reference_images.is_empty()) {
-		// ARKit rejects a provider without reference images; wait for registration.
-		return;
+	const auto status = image_store->get_status();
+	const auto state = visionos_tracking_access().perform([&] { return ar_data_provider_get_state(image_tracking_provider); });
+	image_store->provider_changed(status.provider_token, image_provider_state(state), OK, "", status.state_revision);
+	if (image_handler_generation != image_store->get_status().generation) {
+		install_image_handler();
+	}
+}
+
+void VisionOSSceneUnderstanding::set_image_tracking_authorization(VisionOSAuthorizationStatus p_status) {
+	authorization = p_status;
+	const char *value = p_status == VisionOSAuthorizationStatus::ALLOWED ? "allowed" : (p_status == VisionOSAuthorizationStatus::DENIED ? "denied" : "not_determined");
+	image_store->set_authorization(value);
+}
+
+void VisionOSSceneUnderstanding::set_image_tracking_authorization_error(const String &p_message) {
+	const auto status = image_store->get_status();
+	image_store->set_authorization(status.authorization, FAILED, p_message.utf8().get_data());
+}
+
+static Array image_reference_results(const std::vector<VisionOSImageTrackingStore::ReferenceResult> &p_results) {
+	Array results;
+	for (const auto &reference : p_results) {
+		Dictionary result;
+		result["name"] = String::utf8(reference.name.c_str());
+		result["error"] = reference.error;
+		result["error_message"] = String::utf8(reference.message.c_str());
+		results.push_back(result);
+	}
+	return results;
+}
+
+Dictionary VisionOSSceneUnderstanding::get_image_tracking_status() {
+	sample_image_provider_state();
+	const auto status = image_store->get_status();
+	Dictionary result;
+	result["supported"] = status.supported;
+	result["enabled"] = status.enabled;
+	result["authorization"] = String::utf8(status.authorization.c_str());
+	result["authorization_error"] = status.authorization_error;
+	result["authorization_error_message"] = String::utf8(status.authorization_error_message.c_str());
+	const char *states[] = { "absent", "initialized", "running", "paused", "stopped", "failed" };
+	result["provider_state"] = states[(int)status.provider_state];
+	result["running"] = status.running;
+	result["generation"] = status.generation;
+	result["reference_revision"] = status.reference_revision;
+	result["superseded_reference_revision"] = status.superseded_reference_revision;
+	result["registration_state"] = String::utf8(status.registration_state.c_str());
+	result["per_image_results"] = image_reference_results(status.references);
+	PackedStringArray names;
+	if (status.registration_state == "registered") {
+		for (const auto &reference : status.references) {
+			if (reference.error == OK) {
+				names.push_back(String::utf8(reference.name.c_str()));
+			}
+		}
+	}
+	result["registered_names"] = names;
+	int error = status.error;
+	String message = String::utf8(status.message.c_str());
+	if (error == OK && status.authorization_error != OK) {
+		error = status.authorization_error;
+		message = String::utf8(status.authorization_error_message.c_str());
+	} else if (error == OK && !status.supported) {
+		error = ERR_UNAVAILABLE;
+		message = "ARKit image tracking is unsupported on this device.";
+	} else if (error == OK && !status.enabled) {
+		error = ERR_UNCONFIGURED;
+		message = "The enable_image_tracking project setting is disabled.";
+	} else if (error == OK && status.authorization == "denied") {
+		error = ERR_UNAUTHORIZED;
+		message = "World-sensing authorization was denied.";
+	}
+	result["error"] = error;
+	result["error_message"] = message;
+	return result;
+}
+
+Dictionary VisionOSSceneUnderstanding::replace_marker_reference_images(const Array &p_images) {
+	LocalVector<ReferenceImage> candidate;
+	std::vector<VisionOSImageTrackingStore::ReferenceResult> results;
+	HashSet<String> names;
+	bool valid = !uninitializing;
+	for (int i = 0; i < p_images.size(); i++) {
+		VisionOSImageTrackingStore::ReferenceResult result;
+		ReferenceImage reference;
+		bool entry_valid = p_images[i].get_type() == Variant::DICTIONARY;
+		if (entry_valid) {
+			Dictionary entry = p_images[i];
+			Variant name = entry.get("name", Variant());
+			Variant image = entry.get("image", Variant());
+			Variant width = entry.get("physical_width_m", Variant());
+			entry_valid = name.get_type() == Variant::STRING && image.get_type() == Variant::OBJECT &&
+					(width.get_type() == Variant::FLOAT || width.get_type() == Variant::INT);
+			if (entry_valid) {
+				reference.name = name;
+				reference.image = image;
+				reference.physical_width = width;
+				entry_valid = !reference.name.is_empty() && !names.has(reference.name) &&
+						reference.image.is_valid() && !reference.image->is_empty() &&
+						Math::is_finite(reference.physical_width) && reference.physical_width > 0;
+				names.insert(reference.name);
+			}
+		}
+		result.name = reference.name.utf8().get_data();
+		if (!entry_valid) {
+			result.error = ERR_INVALID_PARAMETER;
+			result.message = "Expected a unique nonempty name, nonempty Image and finite positive physical_width_m.";
+			valid = false;
+		} else {
+			// The caller may mutate its Image after this call, including while the set is staged.
+			reference.image = reference.image->duplicate();
+			candidate.push_back(reference);
+		}
+		results.push_back(result);
 	}
 
+	String error_message = valid ? String() : "Invalid reference image batch; the previous set was retained.";
+	Error error = valid ? OK : ERR_INVALID_PARAMETER;
+	ar_image_tracking_provider_t provider = nullptr;
+	const bool live = image_tracking_enabled && ar_session != nullptr;
+	if (valid && live && !candidate.is_empty()) {
+		provider = build_image_provider(candidate, results, error, error_message);
+		valid = provider != nullptr;
+	}
+	Dictionary result;
+	result["accepted"] = valid;
+	result["error"] = error;
+	result["error_message"] = error_message;
+	result["per_image_results"] = image_reference_results(results);
+	result["reference_revision"] = image_store->get_status().reference_revision;
+	result["superseded_reference_revision"] = 0;
+	if (!valid) {
+		return result;
+	}
+
+	// No destructive change occurs before the whole candidate succeeds.
+	if (image_tracking_provider != nullptr) {
+		ar_image_tracking_provider_set_update_handler(image_tracking_provider, nullptr, nullptr);
+	}
+	reference_images = candidate;
+	image_tracking_provider = provider;
+	image_store->replace(results, live && provider != nullptr);
+	install_image_handler();
+	install_provider_state_handler();
+	providers_changed = ar_session != nullptr;
+	const auto status = image_store->get_status();
+	result["reference_revision"] = status.reference_revision;
+	result["superseded_reference_revision"] = status.superseded_reference_revision;
+	result["registration_state"] = String::utf8(status.registration_state.c_str());
+	// Emit tracker removal only after committing the complete replacement.
+	clear_marker_trackers();
+	return result;
+}
+
+ar_image_tracking_provider_t VisionOSSceneUnderstanding::build_image_provider(const LocalVector<ReferenceImage> &p_images, std::vector<VisionOSImageTrackingStore::ReferenceResult> &r_results, Error &r_code, String &r_error) {
+	r_code = ERR_CANT_CREATE;
+	r_results.clear();
+	for (const auto &image : p_images) {
+		r_results.push_back({ image.name.utf8().get_data(), OK, "" });
+	}
+	if (!is_image_tracking_supported()) {
+		r_code = ERR_UNAVAILABLE;
+		r_error = "ARKit image tracking is unsupported on this device.";
+		for (auto &result : r_results) {
+			result.error = ERR_UNAVAILABLE;
+			result.message = r_error.utf8().get_data();
+		}
+		return nullptr;
+	}
 	ar_reference_images_t references = ar_reference_images_create();
-	for (const ReferenceImage &reference_image : reference_images) {
+	if (references == nullptr) {
+		r_error = "ARKit could not allocate the reference image collection.";
+		return nullptr;
+	}
+	bool valid = true;
+	for (uint32_t i = 0; i < p_images.size(); i++) {
+		const ReferenceImage &reference_image = p_images[i];
 		ar_reference_image_t reference = _create_reference_image(reference_image.image, reference_image.physical_width);
 		if (reference == nullptr) {
+			r_results[i].error = ERR_CANT_CREATE;
+			r_results[i].message = "ARKit could not create this reference image.";
+			valid = false;
 			continue;
 		}
 		ar_reference_image_set_name(reference, reference_image.name.utf8().get_data());
+		const size_t before = ar_reference_images_get_count(references);
 		ar_reference_images_add_image(references, reference);
+		if (ar_reference_images_get_count(references) != before + 1) {
+			r_results[i].error = ERR_ALREADY_EXISTS;
+			r_results[i].message = "ARKit rejected a duplicate reference image.";
+			valid = false;
+		}
 	}
-	if (ar_reference_images_get_count(references) == 0) {
+	if (!valid) {
+		r_error = "ARKit rejected one or more reference images.";
+		return nullptr;
+	}
+	ar_image_tracking_configuration_t config = ar_image_tracking_configuration_create();
+	if (config == nullptr) {
+		r_error = "ARKit could not allocate the image tracking configuration.";
+		return nullptr;
+	}
+	ar_image_tracking_configuration_add_reference_images(config, references);
+	ar_image_tracking_provider_t provider = ar_image_tracking_provider_create(config);
+	if (provider == nullptr) {
+		r_error = "ARKit could not create the image tracking provider.";
+		return nullptr;
+	}
+	r_code = OK;
+	return provider;
+}
+
+void VisionOSSceneUnderstanding::install_image_handler() {
+	if (image_tracking_provider == nullptr) {
 		return;
 	}
-
-	ar_image_tracking_configuration_t config = ar_image_tracking_configuration_create();
-	ar_image_tracking_configuration_add_reference_images(config, references);
-	image_tracking_provider = ar_image_tracking_provider_create(config);
-
-	uint64_t revision = image_tracking_revision;
+	const auto store = image_store;
+	const auto installed_status = store->get_status();
+	const uint64_t token = installed_status.provider_token;
+	const uint64_t generation = installed_status.generation;
+	image_handler_generation = generation;
 	ar_image_tracking_provider_set_update_handler(image_tracking_provider,
 			dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
 			^(ar_image_anchors_t added, ar_image_anchors_t updated, ar_image_anchors_t removed) {
-				__block LocalVector<MarkerUpdate> updates;
-				auto collect = ^(ar_image_anchors_t p_anchors, MarkerUpdate::Type p_type) {
+				const auto status = store->get_status();
+				if (status.provider_token != token || status.generation != generation || !status.running) {
+					return;
+				}
+				const uint64_t received_ticks = OS::get_singleton()->get_ticks_usec();
+				auto collect = ^(ar_image_anchors_t p_anchors, bool p_removed) {
+					if (p_anchors == nullptr) {
+						return;
+					}
 					ar_image_anchors_enumerate_anchors(p_anchors, ^bool(ar_image_anchor_t anchor) {
-						MarkerUpdate upd;
-						upd.type = p_type;
+						VisionOSImageTrackingStore::Observation upd;
 						uuid_t uuid;
+						char text[37];
 						ar_image_anchor_get_identifier(anchor, uuid);
-						upd.anchor_id_hash = uuid_to_hash(uuid);
-						upd.anchor_uuid_str = uuid_to_string(uuid);
-						if (p_type != MarkerUpdate::REMOVED) {
+						uuid_unparse_lower(uuid, text);
+						upd.uuid = text;
+						upd.removed = p_removed;
+						upd.observation_time = ar_image_anchor_get_timestamp(anchor);
+						upd.received_ticks_usec = received_ticks;
+						if (!p_removed) {
 							ar_reference_image_t reference = ar_image_anchor_get_reference_image(anchor);
 							const char *name = ar_reference_image_get_name(reference);
-							upd.name = name ? String::utf8(name) : String();
+							upd.name = name ? name : "";
 							upd.physical_size = Vector2(ar_reference_image_get_physical_width(reference), ar_reference_image_get_physical_height(reference));
 							upd.estimated_scale_factor = ar_image_anchor_get_estimated_scale_factor(anchor);
 							upd.tracked = ar_image_anchor_is_tracked(anchor);
 							Transform3D anchor_transform = _simd4x4_to_transform3d(ar_image_anchor_get_origin_from_anchor_transform(anchor));
-							upd.transform = Transform3D(anchor_transform.basis.orthonormalized() * _arkit_image_to_marker, anchor_transform.origin);
+							if (!VisionOSImageTrackingStore::marker_transform(anchor_transform, upd.transform)) {
+								upd.tracked = false;
+							}
 						}
-						updates.push_back(upd);
+						store->update(token, generation, upd);
 						return true;
 					});
 				};
-				collect(added, MarkerUpdate::ADDED);
-				collect(updated, MarkerUpdate::UPDATED);
-				collect(removed, MarkerUpdate::REMOVED);
-
-				if (updates.size() > 0) {
-					MutexLock lock(marker_mutex);
-					if (revision != image_tracking_revision) {
-						return;
-					}
-					for (uint32_t i = 0; i < updates.size(); i++) {
-						pending_marker_updates.push_back(updates[i]);
-					}
-				}
+				collect(added, false);
+				collect(updated, false);
+				collect(removed, true);
 			});
+}
 
-	print_verbose(vformat("visionOS: Image tracking provider initialized with %d reference images.", (int)ar_reference_images_get_count(references)));
+void VisionOSSceneUnderstanding::setup_image_tracking() {
+	if (reference_images.is_empty()) {
+		return;
+	}
+	auto results = image_store->get_status().references;
+	String error;
+	Error code = OK;
+	ar_image_tracking_provider_t provider = build_image_provider(reference_images, results, code, error);
+	if (provider == nullptr) {
+		image_store->registration_failed(results, code, error.utf8().get_data());
+		ERR_PRINT(error);
+		return;
+	}
+	image_tracking_provider = provider;
+	image_store->activate();
+	install_image_handler();
+	providers_changed = true;
 }
 
 void VisionOSSceneUnderstanding::teardown_image_tracking() {
-	{
-		MutexLock lock(marker_mutex);
-		image_tracking_revision++;
-		pending_marker_updates.clear();
-	}
+	image_store->stop();
+	image_handler_generation = 0;
 	if (image_tracking_provider != nullptr) {
 		ar_image_tracking_provider_set_update_handler(image_tracking_provider, nullptr, nullptr);
 		image_tracking_provider = nullptr;
 	}
+	clear_marker_trackers();
+}
+
+void VisionOSSceneUnderstanding::clear_marker_trackers() {
+	const HashMap<String, Ref<VisionOSMarkerTracker>> old_trackers(marker_trackers);
+	marker_trackers.clear();
+	published_image_sequence = 0;
 	XRServer *xr_server = XRServer::get_singleton();
-	for (const KeyValue<uint64_t, Ref<VisionOSMarkerTracker>> &kv : marker_trackers) {
+	for (const KeyValue<String, Ref<VisionOSMarkerTracker>> &kv : old_trackers) {
 		kv.value->set_marker_tracked(false);
 		kv.value->invalidate_pose(SNAME("default"));
 		if (xr_server) {
 			xr_server->remove_tracker(kv.value);
 		}
 	}
-	marker_trackers.clear();
 }
 
 void VisionOSSceneUnderstanding::process_marker_updates() {
-	LocalVector<MarkerUpdate> updates;
-	{
-		MutexLock lock(marker_mutex);
-		updates = pending_marker_updates;
-		pending_marker_updates.clear();
+	const auto status = image_store->get_status();
+	const uint64_t lifecycle = lifecycle_revision;
+	if (status.generation != published_image_generation) {
+		published_image_generation = status.generation;
+		clear_marker_trackers();
 	}
-	if (updates.size() == 0) {
+	if (!status.running || lifecycle != lifecycle_revision || status.generation != image_store->get_status().generation) {
 		return;
 	}
-
 	XRServer *xr_server = XRServer::get_singleton();
 	ERR_FAIL_NULL(xr_server);
-
-	for (const MarkerUpdate &upd : updates) {
-		Ref<VisionOSMarkerTracker> *tracker_ptr = marker_trackers.getptr(upd.anchor_id_hash);
-		if (upd.type == MarkerUpdate::REMOVED) {
+	uint64_t latest_sequence = published_image_sequence;
+	for (const auto &upd : image_store->get_observations()) {
+		if (upd.generation != status.generation || upd.sequence <= published_image_sequence) {
+			continue;
+		}
+		if (lifecycle != lifecycle_revision || status.generation != image_store->get_status().generation) {
+			return;
+		}
+		latest_sequence = MAX(latest_sequence, upd.sequence);
+		const String uuid = String::utf8(upd.uuid.c_str());
+		Ref<VisionOSMarkerTracker> *tracker_ptr = marker_trackers.getptr(uuid);
+		if (upd.removed) {
 			if (tracker_ptr != nullptr) {
 				Ref<VisionOSMarkerTracker> tracker = *tracker_ptr;
+				marker_trackers.erase(uuid);
 				tracker->set_marker_tracked(false);
 				tracker->invalidate_pose(SNAME("default"));
 				xr_server->remove_tracker(tracker);
-				marker_trackers.erase(upd.anchor_id_hash);
 			}
 			continue;
 		}
-
 		Ref<VisionOSMarkerTracker> tracker;
 		bool is_new = tracker_ptr == nullptr;
 		if (is_new) {
 			tracker.instantiate();
-			tracker->set_tracker_name("visionos/marker/" + upd.anchor_uuid_str);
-			tracker->set_tracker_desc(upd.name);
-			tracker->set_marker_uuid(upd.anchor_uuid_str);
-			tracker->set_marker_data(upd.name);
+			tracker->set_tracker_name("visionos/marker/" + uuid);
+			tracker->set_tracker_desc(String::utf8(upd.name.c_str()));
+			tracker->set_marker_uuid(uuid);
+			tracker->set_marker_data(String::utf8(upd.name.c_str()));
+			tracker->set_observation_source(image_store, status.generation);
 		} else {
 			tracker = *tracker_ptr;
 		}
 		tracker->set_physical_size(upd.physical_size);
 		tracker->set_estimated_scale_factor(upd.estimated_scale_factor);
-		if (upd.tracked) {
-			tracker->set_pose(SNAME("default"), upd.transform, Vector3(), Vector3(), XRPose::XR_TRACKING_CONFIDENCE_HIGH);
-		} else {
-			// Keep the last pose but flag it; an untracked image anchor is a stale estimate.
-			tracker->set_pose(SNAME("default"), upd.transform, Vector3(), Vector3(), XRPose::XR_TRACKING_CONFIDENCE_LOW);
-		}
+		tracker->set_pose(SNAME("default"), upd.transform, Vector3(), Vector3(), upd.tracked ? XRPose::XR_TRACKING_CONFIDENCE_HIGH : XRPose::XR_TRACKING_CONFIDENCE_LOW);
 		tracker->set_marker_tracked(upd.tracked);
+		if (lifecycle != lifecycle_revision || status.generation != image_store->get_status().generation) {
+			tracker->set_marker_tracked(false);
+			tracker->invalidate_pose(SNAME("default"));
+			return;
+		}
 		if (is_new) {
-			marker_trackers[upd.anchor_id_hash] = tracker;
+			marker_trackers[uuid] = tracker;
 			xr_server->add_tracker(tracker);
 		}
+	}
+	if (lifecycle == lifecycle_revision && status.generation == image_store->get_status().generation) {
+		published_image_sequence = latest_sequence;
 	}
 }
 
@@ -975,27 +1227,46 @@ void VisionOSSceneUnderstanding::setup_anchor_lifecycle() {
 	if (anchor_lifecycle_installed || ar_session == nullptr || world_tracking_provider == nullptr) {
 		return;
 	}
-	const auto store = anchor_store;
-	const uint64_t observer = store->watch_provider();
-	ar_world_tracking_provider_t provider = world_tracking_provider;
+	anchor_lifecycle_installed = true;
+	install_provider_state_handler();
+}
+
+void VisionOSSceneUnderstanding::install_provider_state_handler() {
+	if (ar_session == nullptr || uninitializing) {
+		return;
+	}
 	visionos_tracking_access().perform([&] {
 		// Blocks created inside a [&] lambda would capture these by reference to this stack frame, and ARKit invokes them later.
-		const auto block_store = store;
-		const uint64_t block_observer = observer;
-		const ar_world_tracking_provider_t block_provider = provider;
+		const auto block_store = anchor_store;
+		const uint64_t block_observer = anchor_observer;
+		const bool observe_world = anchor_lifecycle_installed;
+		const ar_world_tracking_provider_t block_provider = world_tracking_provider;
+		const auto block_images = image_store;
+		const uint64_t image_token = image_store->get_status().provider_token;
+		const ar_image_tracking_provider_t image_provider = image_tracking_provider;
 		ar_session_set_data_provider_state_change_handler(ar_session,
 				dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
 				^(ar_data_providers_t providers, ar_data_provider_state_t state, ar_error_t error, ar_data_provider_t failed_provider) {
-					ar_data_providers_enumerate_data_providers(providers, ^bool(ar_data_provider_t changed_provider) {
-						if (changed_provider == block_provider) {
-							block_store->provider_changed(block_observer);
-							return false;
-						}
-						return true;
-					});
+					__block bool world_changed = block_provider != nullptr && (failed_provider == block_provider || (error != nullptr && failed_provider == nullptr));
+					__block bool image_changed = image_provider != nullptr && (failed_provider == image_provider || (error != nullptr && failed_provider == nullptr));
+					if (providers != nullptr) {
+						ar_data_providers_enumerate_data_providers(providers, ^bool(ar_data_provider_t changed_provider) {
+							world_changed |= block_provider != nullptr && changed_provider == block_provider;
+							image_changed |= image_provider != nullptr && changed_provider == image_provider;
+							return true;
+						});
+					}
+					if (world_changed && observe_world) {
+						block_store->provider_changed(block_observer);
+					}
+					if (image_changed) {
+						const bool image_failed = error != nullptr && (failed_provider == nullptr || failed_provider == image_provider);
+						block_images->provider_changed(image_token, image_provider_state(state),
+								image_failed ? (int)ar_error_get_error_code(error) : OK,
+								image_failed ? world_anchor_error(error, false) : "");
+					}
 				});
 	});
-	anchor_lifecycle_installed = true;
 }
 
 void VisionOSSceneUnderstanding::setup_world_anchors() {
