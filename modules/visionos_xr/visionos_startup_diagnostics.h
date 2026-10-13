@@ -65,6 +65,8 @@ public:
 		uint64_t generation = 0;
 		uint64_t sequence = 0;
 		double age_ms = 0;
+		// How far ahead of its acquiring drawable the source pose was predicted.
+		double lead_ms = 0;
 	};
 
 	struct Transition {
