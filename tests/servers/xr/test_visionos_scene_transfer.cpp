@@ -262,6 +262,30 @@ TEST_CASE("[visionOS] Eye mapping preserves rays and transforms translated origi
 	CHECK(visionos_scene_transfer_eye_mapping(source, destination, source_projection, simd_float4x4{}, parameters).rejection == VisionOSEyeTransformComparison::INVALID_PROJECTION);
 }
 
+TEST_CASE("[visionOS] Eye mapping treats drawable roundoff as the same eye origin") {
+	// Recorded on Apple Vision Pro: consecutive drawables report the same left
+	// eye with origin deltas of float roundoff only.
+	simd_float4x4 source = matrix_identity_float4x4;
+	source.columns[3] = simd_make_float4(-0.030119190f, -0.026016925f, 0.008487530f, 1);
+	auto projection = make_projection(1.2f, 1.2f, 0);
+	for (simd_float3 delta : { simd_make_float3(4.6566129e-08f, 7.4505806e-09f, -1.0244548e-08f),
+				 simd_make_float3(9.4994903e-08f, 9.3132257e-09f, -5.6810677e-08f) }) {
+		auto destination = source;
+		destination.columns[3].xyz += delta;
+		VisionOSSceneTransferParameters parameters{};
+		auto comparison = visionos_scene_transfer_eye_mapping(source, destination, projection, projection, parameters);
+		CHECK(comparison.rejection == VisionOSEyeTransformComparison::NONE);
+		CHECK(comparison.original_mismatch == false);
+		CHECK(comparison.translation_m[0] != 0);
+		CHECK_FALSE(comparison.positional_reprojection);
+		CHECK(parameters.positional_reprojection == 0);
+	}
+	auto destination = source;
+	destination.columns[3].x += 0.000002f;
+	VisionOSSceneTransferParameters parameters{};
+	CHECK(visionos_scene_transfer_eye_mapping(source, destination, projection, projection, parameters).positional_reprojection);
+}
+
 TEST_CASE("[visionOS] Mixed loading remains transparent before scene or pipeline readiness") {
 	for (double time : { 0.0, 0.25, 1.0, 31.0, 1000.0 }) {
 		auto mixed = visionos_scene_loading_color(true, time);
