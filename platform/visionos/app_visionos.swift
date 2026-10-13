@@ -188,6 +188,10 @@ struct ImmersiveLauncher: View {
 	@Environment(\.dismissWindow) private var dismissWindow
 	@Environment(\.scenePhase) private var scenePhase
 
+	/// Hosted outside the launcher group, so it must close its own window: dismissing
+	/// the "GodotLauncher" id would leave this one open.
+	var dismissesOwnWindow = false
+
 	private let model: Model = .shared
 
 	private func enterImmersiveSpace() async {
@@ -259,7 +263,11 @@ struct ImmersiveLauncher: View {
 			// The launcher only exists to reach the immersive space; once it is
 			// open the window is redundant. The render loop reopens it on exit.
 			if state == .open {
-				dismissWindow(id: "GodotLauncher")
+				if dismissesOwnWindow {
+					dismissWindow()
+				} else {
+					dismissWindow(id: "GodotLauncher")
+				}
 			}
 		}
 	}
@@ -531,6 +539,11 @@ struct SwiftUIApp: App {
 		WindowGroup(id: "GodotStartupStatus", for: UUID.self) { $generation in
 			if let generation {
 				ImmersiveStartupStatus(generation: generation)
+			} else if useCompositorServices {
+				// visionOS can foreground a window session nothing asked for (seen at
+				// launch). With the launcher suppressed, SwiftUI hands it to this group
+				// without a value; an empty view here was a blank window.
+				ImmersiveLauncher(dismissesOwnWindow: true)
 			}
 		}
 		.restorationBehavior(.disabled)
