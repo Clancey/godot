@@ -50,6 +50,10 @@ struct VisionOSSceneTransferParameters {
 	uint32_t source_is_srgb = 0;
 };
 
+// Eye origin shift below which the direct transfer is used. At 0.1 m the
+// ignored parallax is about 0.02 display pixels.
+static constexpr double VISIONOS_EYE_TRANSLATION_EPSILON_M = 1e-6;
+
 inline simd_double4 visionos_scene_loading_color(bool p_alpha_blend, double p_time) {
 	if (p_alpha_blend) {
 		return simd_make_double4(0, 0, 0, 0);
@@ -122,12 +126,17 @@ inline VisionOSEyeTransformComparison visionos_scene_transfer_eye_mapping(
 			comparison.rejection = VisionOSEyeTransformComparison::INVALID_TRANSFORM;
 		}
 	}
+	double translation_squared = 0;
 	for (uint32_t axis = 0; axis < 3; axis++) {
 		comparison.source_origin_m[axis] = p_source_eye.columns[3][axis];
 		comparison.destination_origin_m[axis] = p_destination_eye.columns[3][axis];
 		comparison.translation_m[axis] = p_destination_eye.columns[3][axis] - p_source_eye.columns[3][axis];
-		comparison.positional_reprojection |= comparison.translation_m[axis] != 0;
+		translation_squared += comparison.translation_m[axis] * comparison.translation_m[axis];
 	}
+	// Compositor Services recomputes each drawable's eye transforms, so equal
+	// eyes differ by float roundoff (measured up to 1e-7 m). Ray-marching that
+	// costs a full depth traversal per pixel for no visible parallax.
+	comparison.positional_reprojection = translation_squared > VISIONOS_EYE_TRANSLATION_EPSILON_M * VISIONOS_EYE_TRANSLATION_EPSILON_M;
 	simd_float4x4 source_basis = p_source_eye;
 	simd_float4x4 destination_basis = p_destination_eye;
 	source_basis.columns[3] = destination_basis.columns[3] = simd_make_float4(0, 0, 0, 1);
