@@ -472,9 +472,13 @@ struct CompositorServicesImmersiveSpace: Scene {
 							if renderer.startupState == .failed {
 								model.immersiveSpaceError = "Rendering could not start."
 							}
+							// The launcher was dismissed when the space opened, so it must come
+							// back whether the loop ended during startup or after it.
+							if supportsMultipleWindows {
+								openWindow(id: "GodotLauncher")
+							}
 							if model.startupWindowVisible {
 								model.startupWindowVisible = false
-								openWindow(id: "GodotLauncher")
 								dismissWindow(id: "GodotStartupStatus", value: generation)
 							}
 							model.startupGeneration = nil
