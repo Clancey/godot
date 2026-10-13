@@ -82,7 +82,8 @@ NSDictionary *startup_source(const VisionOSStartupDiagnostics::Source &p_source)
 	return @{@"layer" : @(p_source.layer),
 		@"generation" : @(p_source.generation),
 		@"sequence" : @(p_source.sequence),
-		@"age_ms" : @(p_source.age_ms)};
+		@"age_ms" : @(p_source.age_ms),
+		@"lead_ms" : @(p_source.lead_ms)};
 }
 
 NSString *startup_eye_rejection(VisionOSEyeTransformComparison::Rejection p_rejection) {
@@ -279,6 +280,7 @@ VisionOSPresentation::VisionOSPresentation(cp_layer_renderer_t p_layer, cp_layer
 	queue.label = @"Godot compositor presentation";
 	session = tracking_session().session;
 	world_tracking = tracking_session().provider;
+	pose_latency.configure(getenv("VISIONOS_POSE_LEAD"));
 	startup_diagnostics = visionos_get_startup_diagnostics();
 	if (startup_diagnostics) {
 		static std::atomic<uint64_t> next_layer{ 1 };
@@ -330,6 +332,7 @@ VisionOSPresentation::Lease VisionOSPresentation::acquire(const std::shared_ptr<
 	}
 	auto &output = *lease.output;
 	output.geometry = snapshot;
+	output.sequence = lease.sequence;
 	output.projection_valid = true;
 	output.transparent_background = false;
 	output.color_is_srgb = true;
@@ -396,7 +399,7 @@ void VisionOSPresentation::complete(const Lease &p_lease, id<MTLCommandBuffer> p
 	auto source = lease.output->diagnostic_source;
 	double acquired_at = lease.output->diagnostic_acquired_at;
 	double encoded_at = diagnostics ? CACurrentMediaTime() : 0;
-	double source_time = lease.output->geometry->presentation_time;
+	double source_time = lease.output->geometry->acquired_time;
 	[p_command addCompletedHandler:^(id<MTLCommandBuffer> completed) {
 		bool success = completed.status == MTLCommandBufferStatusCompleted;
 		if (!success) {
@@ -517,18 +520,32 @@ void VisionOSPresentation::present() {
 	}
 	double presentation_time = cp_time_to_cf_time_interval(cp_frame_timing_get_presentation_time(cp_drawable_get_frame_timing(drawable)));
 	ar_device_anchor_t anchor = ar_device_anchor_create();
+	// The engine renders this pose, so predict it for when its output will be
+	// shown rather than for this drawable.
+	double lead = pose_latency.get_lead();
+	ar_device_anchor_t predicted_anchor = lead > 0 ? ar_device_anchor_create() : anchor;
 	std::array<simd_float4x4, 2> acquired_eyes{};
 	bool tracked = tracking_session().access.perform([&] {
-		return ar_world_tracking_provider_query_device_anchor_at_timestamp(world_tracking, presentation_time, anchor) == ar_device_anchor_query_status_success;
+		if (ar_world_tracking_provider_query_device_anchor_at_timestamp(world_tracking, presentation_time, anchor) != ar_device_anchor_query_status_success) {
+			return false;
+		}
+		if (lead > 0 && ar_world_tracking_provider_query_device_anchor_at_timestamp(world_tracking, presentation_time + lead, predicted_anchor) != ar_device_anchor_query_status_success) {
+			predicted_anchor = anchor;
+			lead = 0;
+		}
+		return true;
 	});
 	if (tracked) {
 		cp_drawable_set_device_anchor(drawable, anchor);
 		auto snapshot = std::make_shared<VisionOSSceneGeometry>();
 		snapshot->generation = mailbox->generation();
 		snapshot->alpha_blend = alpha_blend;
-		snapshot->presentation_time = presentation_time;
+		snapshot->acquired_time = presentation_time;
+		snapshot->presentation_time = presentation_time + lead;
+		// Hands and accessories keep the compositor's trackable time: ARKit may
+		// not predict them as far ahead, and a failed query drops the hands.
 		snapshot->trackable_time = cp_time_to_cf_time_interval(cp_frame_timing_get_trackable_anchor_time(frame.get_timing()));
-		snapshot->origin_from_head = MTL::simd_to_transform3D(ar_anchor_get_origin_from_anchor_transform(anchor));
+		snapshot->origin_from_head = MTL::simd_to_transform3D(ar_anchor_get_origin_from_anchor_transform(predicted_anchor));
 		snapshot->width = color.width;
 		snapshot->height = color.height;
 		snapshot->color_format = color.pixelFormat;
@@ -574,7 +591,7 @@ void VisionOSPresentation::present() {
 			return p_anchor.geometry.expired();
 		}),
 				source_anchors.end());
-		source_anchors.push_back({ snapshot, anchor });
+		source_anchors.push_back({ snapshot, predicted_anchor });
 	} else {
 		std::lock_guard<std::mutex> lock(geometry_mutex);
 		geometry.reset();
@@ -584,13 +601,15 @@ void VisionOSPresentation::present() {
 	VisionOSStartupDiagnostics::Source diagnostic_source;
 	if (startup_diagnostics && output) {
 		diagnostic_source = output->diagnostic_source;
+		// Positive when the output is older than its predicted pose.
 		diagnostic_source.age_ms = (presentation_time - output->geometry->presentation_time) * 1000.0;
+		diagnostic_source.lead_ms = (output->geometry->presentation_time - output->geometry->acquired_time) * 1000.0;
 	}
 	if (!tracked) {
 		reason = VisionOSStartupDiagnostics::TRACKING_UNAVAILABLE;
 	} else if (!output) {
 		reason = VisionOSStartupDiagnostics::NO_OUTPUT;
-	} else if (presentation_time - output->geometry->presentation_time > 0.25) {
+	} else if (presentation_time - output->geometry->acquired_time > 0.25) {
 		reason = VisionOSStartupDiagnostics::SOURCE_EXPIRED;
 	} else if (!pipeline_ready.load(std::memory_order_acquire)) {
 		reason = VisionOSStartupDiagnostics::PIPELINE_PENDING;
@@ -654,6 +673,14 @@ void VisionOSPresentation::present() {
 	frame.finish();
 	if (output && !transferred_scene) {
 		reason = VisionOSStartupDiagnostics::EYE_MISMATCH;
+	}
+	// Several outputs can share one geometry and the mailbox recycles output
+	// objects, so each published lease sequence is sampled once. A sample is
+	// taken when the output is encoded, before its command completes; a rare
+	// failed presentation only nudges the smoothed lead.
+	if (output && transferred_scene && output->sequence != last_shown_sequence) {
+		last_shown_sequence = output->sequence;
+		pose_latency.observe(output->geometry->acquired_time, presentation_time);
 	}
 	if (reason == VisionOSStartupDiagnostics::TRACKING_UNAVAILABLE) {
 		completions->startup.set_frame_state(VisionOSStartupStatus::TRACKING_UNAVAILABLE);
