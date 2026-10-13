@@ -173,6 +173,16 @@ public final class SpatialEventObjC: NSObject {
 
 // MARK: Immersive Launcher
 
+// The exported game's name, so startup windows say what is loading.
+private let appDisplayName: String = {
+	for key in ["CFBundleDisplayName", "CFBundleName"] {
+		if let name = Bundle.main.object(forInfoDictionaryKey: key) as? String, !name.isEmpty {
+			return name
+		}
+	}
+	return "Godot"
+}()
+
 struct ImmersiveLauncher: View {
 	@Environment(\.openImmersiveSpace) private var openImmersiveSpace
 	@Environment(\.dismissWindow) private var dismissWindow
@@ -222,8 +232,8 @@ struct ImmersiveLauncher: View {
 
 	var body: some View {
 		VStack(spacing: 20) {
-			Text("Immersive Mode")
-				.font(.title)
+			Text(appDisplayName)
+				.font(.largeTitle)
 			if let error = model.immersiveSpaceError {
 				Text(error)
 			}
@@ -291,6 +301,8 @@ struct ImmersiveStartupStatus: View {
 		TimelineView(.periodic(from: .now, by: 0.2)) { _ in
 			let state = model.renderer?.startupState ?? .loading
 			VStack(spacing: 20) {
+				Text(appDisplayName)
+					.font(.largeTitle)
 				switch state {
 				case .preparingPipelines:
 					ProgressView("Preparing rendering pipelines...")
