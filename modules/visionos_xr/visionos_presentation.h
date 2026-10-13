@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "visionos_pose_latency.h"
 #include "visionos_presentation_thread.h"
 #include "visionos_scene_mailbox.h"
 #include "visionos_startup_diagnostics.h"
@@ -59,8 +60,12 @@ static constexpr uint32_t VISIONOS_RENDER_VIEW_COUNT = 2;
 struct VisionOSSceneGeometry {
 	uint64_t generation = 0;
 	bool alpha_blend = false;
+	// The time the pose is predicted for: the acquiring drawable's
+	// presentation time plus the measured engine-to-display latency.
 	double presentation_time = 0;
 	double trackable_time = 0;
+	// The presentation time of the drawable that acquired this pose.
+	double acquired_time = 0;
 	Transform3D origin_from_head;
 	simd_float4x4 head_from_eye[2];
 	simd_float4x4 projection[2];
@@ -76,6 +81,8 @@ struct VisionOSSceneGeometry {
 
 struct VisionOSSceneOutput {
 	std::shared_ptr<const VisionOSSceneGeometry> geometry;
+	// The mailbox lease sequence this output was rendered for.
+	uint64_t sequence = 0;
 	id<MTLTexture> color = nil;
 	id<MTLTexture> depth = nil;
 	id<MTLBuffer> rate_parameters = nil;
@@ -114,6 +121,10 @@ private:
 	// SDK anchor objects never cross to the scene/GPU worker threads. Retain
 	// exactly the prediction used by each still-owned numeric scene snapshot.
 	std::vector<SourceAnchor> source_anchors;
+	VisionOSPoseLatency pose_latency;
+	// The lease sequence of the last output shown, so latency is sampled once
+	// per output (lease sequences only increase).
+	uint64_t last_shown_sequence = 0;
 	simd_float2 requested_depth_range;
 	std::atomic<bool> requested_alpha_blend{ false };
 	bool alpha_blend = false;
