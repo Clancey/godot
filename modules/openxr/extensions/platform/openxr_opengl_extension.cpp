@@ -35,6 +35,7 @@
 #include "../../openxr_api.h"
 #include "../../openxr_util.h"
 
+#include "drivers/gles3/storage/config.h"
 #include "drivers/gles3/storage/texture_storage.h"
 #include "servers/display/display_server.h"
 
@@ -220,7 +221,7 @@ void OpenXROpenGLExtension::get_usable_depth_formats(Vector<int64_t> &p_usable_d
 	p_usable_depth_formats.push_back(GL_DEPTH_COMPONENT24);
 }
 
-bool OpenXROpenGLExtension::get_swapchain_image_data(XrSwapchain p_swapchain, int64_t p_swapchain_format, uint32_t p_width, uint32_t p_height, uint32_t p_sample_count, uint32_t p_array_size, void **r_swapchain_graphics_data) {
+bool OpenXROpenGLExtension::get_swapchain_image_data(XrSwapchain p_swapchain, int64_t p_swapchain_format, uint32_t p_width, uint32_t p_height, uint32_t p_sample_count, uint32_t p_array_size, XrSwapchainUsageFlags p_usage_flags, void **r_swapchain_graphics_data) {
 	GLES3::TextureStorage *texture_storage = GLES3::TextureStorage::get_singleton();
 	ERR_FAIL_NULL_V(texture_storage, false);
 
@@ -306,6 +307,56 @@ RID OpenXROpenGLExtension::get_texture(void *p_swapchain_graphics_data, int p_im
 	return data->texture_rids[p_image_index];
 }
 
+bool OpenXROpenGLExtension::copy_render_target_layer(RID p_render_target, uint32_t p_layer, void *p_swapchain_graphics_data, int p_image_index) {
+	SwapchainGraphicsData *data = (SwapchainGraphicsData *)p_swapchain_graphics_data;
+	ERR_FAIL_NULL_V(data, false);
+
+	GLES3::TextureStorage *texture_storage = GLES3::TextureStorage::get_singleton();
+	ERR_FAIL_NULL_V(texture_storage, false);
+	GLES3::RenderTarget *rt = texture_storage->get_render_target(p_render_target);
+	ERR_FAIL_NULL_V(rt, false);
+	ERR_FAIL_COND_V(rt->color == 0, false);
+
+	GLES3::Texture *dst_texture = texture_storage->get_texture(get_texture(data, p_image_index));
+	ERR_FAIL_NULL_V(dst_texture, false);
+
+	// The render target is a texture array only when it renders all views at once.
+	const bool layered = rt->view_count > 1 && GLES3::Config::get_singleton()->multiview_supported;
+	ERR_FAIL_COND_V_MSG(!layered && p_layer > 0, false, "OpenXR: Render target isn't layered, can't copy views other than the first.");
+
+	if (data->copy_fbos[0] == 0) {
+		glGenFramebuffers(2, data->copy_fbos);
+	}
+
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, data->copy_fbos[0]);
+	if (layered) {
+		glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, rt->color, 0, p_layer);
+	} else {
+		glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, rt->color, 0);
+	}
+
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, data->copy_fbos[1]);
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst_texture->tex_id, 0);
+
+	const bool complete = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE && glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+	bool copied = false;
+	if (complete) {
+		while (glGetError() != GL_NO_ERROR) {
+			// Drop errors from earlier calls so only the blit's own is checked.
+		}
+		const GLint width = MIN(rt->size.x, (int)dst_texture->width);
+		const GLint height = MIN(rt->size.y, (int)dst_texture->height);
+		glDisable(GL_SCISSOR_TEST);
+		glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		copied = glGetError() == GL_NO_ERROR;
+	}
+
+	glBindFramebuffer(GL_FRAMEBUFFER, GLES3::TextureStorage::system_fbo);
+	ERR_FAIL_COND_V_MSG(!complete, false, "OpenXR: Can't copy the render target into the view swapchain, a framebuffer is incomplete.");
+	ERR_FAIL_COND_V_MSG(!copied, false, "OpenXR: Copying the render target into the view swapchain failed.");
+	return true;
+}
+
 void OpenXROpenGLExtension::cleanup_swapchain_graphics_data(void **p_swapchain_graphics_data) {
 	if (*p_swapchain_graphics_data == nullptr) {
 		return;
@@ -320,6 +371,10 @@ void OpenXROpenGLExtension::cleanup_swapchain_graphics_data(void **p_swapchain_g
 		texture_storage->texture_free(texture_rid);
 	}
 	data->texture_rids.clear();
+
+	if (data->copy_fbos[0] != 0) {
+		glDeleteFramebuffers(2, data->copy_fbos);
+	}
 
 	memdelete(data);
 	*p_swapchain_graphics_data = nullptr;
