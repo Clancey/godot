@@ -145,7 +145,11 @@ void RendererSceneRender::CameraData::set_multiview_camera(uint32_t p_view_count
 	// 12. Create a near plane using -camera z and the eye further along in that axis.
 	Plane near_plane;
 	Vector3 neg_z = -z;
-	if (neg_z.dot(p_transforms[1].origin) < neg_z.dot(p_transforms[0].origin)) {
+	if (p_transforms[0].origin.is_equal_approx(p_transforms[1].origin)) {
+		// Both eyes share one origin (the Android XR emulator reports no IPD), so a plane through
+		// the eyes would contain every frustum edge and collapse the frustum. Use the eye's near plane.
+		near_plane = Plane(neg_z, p_transforms[0].origin + neg_z * p_projections[0].get_z_near());
+	} else if (neg_z.dot(p_transforms[1].origin) < neg_z.dot(p_transforms[0].origin)) {
 		near_plane = Plane(neg_z, p_transforms[0].origin);
 	} else {
 		near_plane = Plane(neg_z, p_transforms[1].origin);

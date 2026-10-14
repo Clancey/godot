@@ -78,6 +78,7 @@ public:
 		bool release();
 		RID get_image();
 		RID get_density_map();
+		bool copy_from_render_target(RID p_render_target, uint32_t p_layer);
 	};
 
 private:
@@ -381,7 +382,16 @@ private:
 
 		Size2i main_swapchain_size;
 		OpenXRSwapChainInfo main_swapchains[OPENXR_SWAPCHAIN_MAX];
+
+		// Fallback for runtimes that can't allocate layered swapchains (the Android XR
+		// emulator): Godot renders into its own layered render target and copies each
+		// layer into its own single-layer swapchain after drawing.
+		bool use_view_swapchains = false;
+		LocalVector<OpenXRSwapChainInfo> view_swapchains;
+		bool view_copies_valid = false;
 	} render_state;
+
+	bool _is_color_image_acquired() const;
 
 	static void _allocate_view_buffers_rt(uint32_t p_view_count, bool p_submit_depth_buffer);
 	static void _set_render_session_running_rt(bool p_is_running);
@@ -430,6 +440,7 @@ public:
 	bool interaction_profile_supports_io_path(const String &p_ip_path, const String &p_io_path);
 
 	static bool openxr_is_enabled(bool p_check_run_in_editor = true);
+	static bool is_running_on_android_emulator();
 	_FORCE_INLINE_ static OpenXRAPI *get_singleton() { return singleton; }
 
 	XrResult try_get_instance_proc_addr(const char *p_name, PFN_xrVoidFunction *p_addr);

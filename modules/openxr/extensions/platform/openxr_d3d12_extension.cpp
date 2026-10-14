@@ -134,7 +134,7 @@ void OpenXRD3D12Extension::get_usable_depth_formats(Vector<int64_t> &p_usable_de
 	p_usable_depth_formats.push_back(DXGI_FORMAT_D16_UNORM);
 }
 
-bool OpenXRD3D12Extension::get_swapchain_image_data(XrSwapchain p_swapchain, int64_t p_swapchain_format, uint32_t p_width, uint32_t p_height, uint32_t p_sample_count, uint32_t p_array_size, void **r_swapchain_graphics_data) {
+bool OpenXRD3D12Extension::get_swapchain_image_data(XrSwapchain p_swapchain, int64_t p_swapchain_format, uint32_t p_width, uint32_t p_height, uint32_t p_sample_count, uint32_t p_array_size, XrSwapchainUsageFlags p_usage_flags, void **r_swapchain_graphics_data) {
 	RenderingServer *rendering_server = RenderingServer::get_singleton();
 	ERR_FAIL_NULL_V(rendering_server, false);
 	RenderingDevice *rendering_device = rendering_server->get_rendering_device();
