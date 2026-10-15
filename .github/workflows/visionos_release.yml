@@ -1,15 +1,16 @@
-name: 🕶️ visionOS Release
+name: Clancey Release
 
 on:
   push:
     branches:
-      - visionos-4.8
+      - Clancey
     tags:
+      - clancey-v*
       - visionos-v*
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to create (e.g. visionos-v4.8.dev.1). Leave empty to publish a rolling "visionos-latest" release.
+        description: Release tag to create (e.g. clancey-v4.8.dev.1). Leave empty to publish the compatible rolling "visionos-latest" release.
         type: string
         required: false
       prerelease:
@@ -957,7 +958,7 @@ jobs:
           # literal from pieces so the raw workflow text never contains that sequence where it's printed.
           EXPR_OPEN='$''{{'
           cat > notes.md <<EOF
-          visionOS build of Godot \`$GODOT_VERSION\` from \`${{ github.ref_name }}\` (\`${{ github.sha }}\`).
+          Clancey build of Godot \`$GODOT_VERSION\` with visionOS and Android XR support from \`${{ github.ref_name }}\` (\`${{ github.sha }}\`).
 
           ## Assets
 
@@ -1021,7 +1022,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          flags=(--title "Godot visionOS ${{ needs.metadata.outputs.godot-version }} ($TAG)" --notes-file notes.md --target "${{ github.sha }}")
+          flags=(--title "Godot Clancey ${{ needs.metadata.outputs.godot-version }} ($TAG)" --notes-file notes.md --target "${{ github.sha }}")
           if [ "$PRERELEASE" = "true" ]; then
             flags+=(--prerelease)
           fi

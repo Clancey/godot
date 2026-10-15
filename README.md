@@ -1,5 +1,20 @@
 # Godot Engine
 
+## Clancey fork
+
+`Clancey` is this fork's combined Godot 4.8 release branch, containing the
+consolidated visionOS and Android XR work, including Quest spatial tracking and
+Android XR emulator support. `visionos-4.8` and `androidxr-4.8` retain the separate
+platform integrations; `androidxr-emulator-4.7` retains the Godot 4.7.2 emulator port.
+
+The **Clancey Release** workflow (`.github/workflows/visionos_release.yml`) builds
+the editors and all-platform export templates from `Clancey`. Pushes to this branch
+update the rolling `visionos-latest` release; that name is retained for existing
+download integrations. To cut a versioned release, run the workflow on `Clancey`
+with a tag such as `clancey-v4.8.dev.1`, or push a `clancey-v*` tag at the desired
+commit. Set `dry_run` when dispatching the workflow to assemble artifacts without
+publishing a release.
+
 <p align="center">
   <a href="https://godotengine.org">
     <img src="misc/logo/logo_outlined.svg" width="400" alt="Godot Engine logo">
