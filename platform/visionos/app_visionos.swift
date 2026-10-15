@@ -372,12 +372,17 @@ struct ContentStageConfiguration: CompositorLayerConfiguration {
 			configuration.layout = .layered
 			configuration.isFoveationEnabled = foveationEnabled
 		} else if capabilities.supportedLayouts(options: []).contains(.dedicated) {
+			#if targetEnvironment(simulator)
 			// Some simulator runtimes only expose a dedicated, monoscopic target.
 			configuration.layout = .dedicated
 			configuration.isFoveationEnabled = false
 			Logger.godot.log("Using the dedicated compositor layout without foveation (.layered unavailable)")
+			#else
+			// Device scene targets and camera projections require two layered views.
+			fatalError("Godot's visionOS XR module requires the .layered layout on device; monoscopic .dedicated is supported only in the simulator.")
+			#endif
 		} else {
-			fatalError("Godot's visionOS XR module requires the .layered or monoscopic .dedicated layout.")
+			fatalError("Godot's visionOS XR module requires the .layered layout, or monoscopic .dedicated in the simulator.")
 		}
 
 		if GDTAppDelegateServiceVisionOS.isDynamicRenderQualityEnabled {
