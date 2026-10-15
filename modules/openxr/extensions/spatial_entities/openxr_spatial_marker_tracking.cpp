@@ -515,7 +515,7 @@ void OpenXRSpatialMarkerTrackingCapability::on_session_created(const XrSession p
 
 	// TEMPORARY INSTRUMENTATION: an OpenXR session restart re-runs all of this,
 	// which would recreate the spatial context and restart marker tracking.
-	print_line(vformat("OpenXR marker debug: on_session_created, enable_builtin_for_types=%d", marker_types));
+	print_verbose(vformat("OpenXR marker debug: on_session_created, enable_builtin_for_types=%d", marker_types));
 
 	if (marker_types != 0) {
 		// Start our builtin tracking system.
@@ -528,7 +528,7 @@ void OpenXRSpatialMarkerTrackingCapability::on_session_created(const XrSession p
 }
 
 void OpenXRSpatialMarkerTrackingCapability::on_session_destroyed() {
-	print_line("OpenXR marker debug: on_session_destroyed, stopping built-in marker tracking");
+	print_verbose("OpenXR marker debug: on_session_destroyed, stopping built-in marker tracking");
 
 	// Stop our built in tracking (if applicable), this will also clean up any markers previously detected.
 	stop_built_in_tracking();
@@ -564,7 +564,7 @@ void OpenXRSpatialMarkerTrackingCapability::on_process() {
 				// TEMPORARY INSTRUMENTATION: each retry issues a new
 				// xrCreateSpatialContextAsyncEXT, which the runtime may surface as
 				// tearing down and recreating its marker tracking service.
-				print_line(vformat("OpenXR marker debug: retrying built-in tracking (retries_left=%d) - this re-creates the spatial context", built_in_retries_left));
+				print_verbose(vformat("OpenXR marker debug: retrying built-in tracking (retries_left=%d) - this re-creates the spatial context", built_in_retries_left));
 
 				builtin_tracking_state = OpenXRSpatialEntityExtension::TrackingState::TRACKING_NOT_ACTIVE;
 				start_built_in_tracking(built_in_marker_types);
@@ -653,7 +653,7 @@ void OpenXRSpatialMarkerTrackingCapability::on_process() {
 	if (debug_heartbeat >= 72) {
 		debug_heartbeat = 0;
 		int tracked_count = marker_trackers.has(spatial_context) ? marker_trackers[spatial_context].size() : 0;
-		print_line(vformat("OpenXR marker debug: heartbeat trackers=%d update_queries=%d update_results=%d need_discovery=%s discovery_cooldown=%d discovery_pending=%s",
+		print_verbose(vformat("OpenXR marker debug: heartbeat trackers=%d update_queries=%d update_results=%d need_discovery=%s discovery_cooldown=%d discovery_pending=%s",
 				tracked_count, debug_update_queries, debug_update_results, need_discovery ? "true" : "false", discovery_cooldown, discovery_query_result.is_valid() ? "true" : "false"));
 		debug_update_queries = 0;
 		debug_update_results = 0;
@@ -720,7 +720,7 @@ void OpenXRSpatialMarkerTrackingCapability::do_entity_update(RID p_spatial_conte
 	} else {
 		// TEMPORARY INSTRUMENTATION: an update query that can't even produce a
 		// snapshot would silently freeze every tracker's pose.
-		print_line(vformat("OpenXR marker debug: update_spatial_entities returned an invalid snapshot for %d entities", int(entities.size())));
+		print_verbose(vformat("OpenXR marker debug: update_spatial_entities returned an invalid snapshot for %d entities", int(entities.size())));
 	}
 }
 
@@ -803,7 +803,7 @@ void OpenXRSpatialMarkerTrackingCapability::stop_built_in_tracking(bool p_clear_
 	if (spatial_context.is_valid()) {
 		// TEMPORARY INSTRUMENTATION: destroying the spatial context is what makes
 		// a runtime shut its marker tracking service down.
-		print_line(vformat("OpenXR marker debug: destroying spatial context (clear_trackers=%s)", p_clear_trackers ? "true" : "false"));
+		print_verbose(vformat("OpenXR marker debug: destroying spatial context (clear_trackers=%s)", p_clear_trackers ? "true" : "false"));
 
 		OpenXRSpatialEntityExtension *se_extension = OpenXRSpatialEntityExtension::get_singleton();
 		ERR_FAIL_NULL(se_extension);
@@ -862,13 +862,13 @@ Ref<OpenXRFutureResult> OpenXRSpatialMarkerTrackingCapability::_create_spatial_c
 
 	// TEMPORARY INSTRUMENTATION: creating a spatial context is a session-level
 	// operation; a runtime may start/stop its marker tracking service for each one.
-	print_line(vformat("OpenXR marker debug: creating spatial context with %d capability configuration(s)", int(capability_configurations.size())));
+	print_verbose(vformat("OpenXR marker debug: creating spatial context with %d capability configuration(s)", int(capability_configurations.size())));
 
 	return se_extension->create_spatial_context(capability_configurations, nullptr, callable_mp(this, &OpenXRSpatialMarkerTrackingCapability::_on_spatial_context_created), callable_mp(this, &OpenXRSpatialMarkerTrackingCapability::_on_spatial_context_creation_failed));
 }
 
 void OpenXRSpatialMarkerTrackingCapability::_on_spatial_context_created(RID p_spatial_context) {
-	print_line("OpenXR marker debug: spatial context created, built-in marker tracking is now enabled");
+	print_verbose("OpenXR marker debug: spatial context created, built-in marker tracking is now enabled");
 	builtin_tracking_state = OpenXRSpatialEntityExtension::TrackingState::TRACKING_ENABLED;
 	spatial_context = p_spatial_context;
 	need_discovery = true;
@@ -880,7 +880,7 @@ void OpenXRSpatialMarkerTrackingCapability::_on_spatial_context_created(RID p_sp
 void OpenXRSpatialMarkerTrackingCapability::_on_spatial_context_creation_failed(int p_xr_result, bool p_is_completion_failure) {
 	XrResult result = XrResult(p_xr_result);
 
-	print_line(vformat("OpenXR marker debug: spatial context creation failed (xr_result=%d, completion_failure=%s)", p_xr_result, p_is_completion_failure ? "true" : "false"));
+	print_verbose(vformat("OpenXR marker debug: spatial context creation failed (xr_result=%d, completion_failure=%s)", p_xr_result, p_is_completion_failure ? "true" : "false"));
 
 	switch (result) {
 		case XR_ERROR_PERMISSION_INSUFFICIENT:
@@ -972,7 +972,7 @@ void OpenXRSpatialMarkerTrackingCapability::_process_snapshot(RID p_snapshot, RI
 				if (!had_last_state || last_state != int(entity_state)) {
 					debug_state_changed = true;
 					debug_last_entity_state[entity_id] = int(entity_state);
-					print_line(vformat("OpenXR marker debug: entity=%d state=%s (was %s) discovery=%s bounded2d=%s marker=%s",
+					print_verbose(vformat("OpenXR marker debug: entity=%d state=%s (was %s) discovery=%s bounded2d=%s marker=%s",
 							uint64_t(entity_id),
 							_debug_entity_state_name(int(entity_state)),
 							had_last_state ? _debug_entity_state_name(last_state) : String("<new>"),
@@ -1074,7 +1074,7 @@ void OpenXRSpatialMarkerTrackingCapability::_process_snapshot(RID p_snapshot, RI
 							} break;
 						}
 
-						print_line(vformat("OpenXR marker debug: entity=%d TRACKING pose_valid=%s confidence=%d origin=%s bounds=%s marker_type=%d marker_id=%d buffer_id=%d payload=%s",
+						print_verbose(vformat("OpenXR marker debug: entity=%d TRACKING pose_valid=%s confidence=%d origin=%s bounds=%s marker_type=%d marker_id=%d buffer_id=%d payload=%s",
 								uint64_t(entity_id),
 								(debug_pose.is_valid() && debug_pose->get_has_tracking_data()) ? "true" : "false",
 								debug_pose.is_valid() ? int(debug_pose->get_tracking_confidence()) : -1,
@@ -1102,7 +1102,7 @@ void OpenXRSpatialMarkerTrackingCapability::_process_snapshot(RID p_snapshot, RI
 
 					// TEMPORARY INSTRUMENTATION: this is the path that silently
 					// discards an entity that a discovery snapshot didn't list.
-					print_line(vformat("OpenXR marker debug: entity=%d dropped by discovery cleanup (absent from discovery snapshot)", uint64_t(entity_id)));
+					print_verbose(vformat("OpenXR marker debug: entity=%d dropped by discovery cleanup (absent from discovery snapshot)", uint64_t(entity_id)));
 					debug_last_entity_state.erase(entity_id);
 
 					// Just in case there are still references out there to this marker,

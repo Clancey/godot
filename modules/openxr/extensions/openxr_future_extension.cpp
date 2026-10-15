@@ -232,7 +232,7 @@ void OpenXRFutureExtension::on_process() {
 			debug_poll_heartbeat++;
 			if (debug_poll_heartbeat >= 72) {
 				debug_poll_heartbeat = 0;
-				print_line(vformat("OpenXR marker debug: future extension is NOT active, %d future(s) can never complete", int(futures.size())));
+				print_verbose(vformat("OpenXR marker debug: future extension is NOT active, %d future(s) can never complete", int(futures.size())));
 			}
 		}
 		return;
@@ -265,7 +265,7 @@ void OpenXRFutureExtension::on_process() {
 		};
 		XrResult result = xrPollFutureEXT_ptr(openxr_api->get_instance(), &poll_info, &poll_result);
 		if (debug_report) {
-			print_line(vformat("OpenXR marker debug: polling future %d -> xr_result=%d state=%d (1=PENDING, 2=READY)",
+			print_verbose(vformat("OpenXR marker debug: polling future %d -> xr_result=%d state=%d (1=PENDING, 2=READY)",
 					uint64_t(element.key), int(result), int(poll_result.state)));
 		}
 		if (XR_FAILED(result)) {
