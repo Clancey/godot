@@ -45,6 +45,8 @@
 
 #ifdef ANDROID_ENABLED
 #include "core/os/os.h"
+
+#include <sys/system_properties.h>
 #endif
 
 #include "openxr_platform_inc.h" // IWYU pragma: keep.
@@ -135,7 +137,7 @@ bool OpenXRAPI::OpenXRSwapChainInfo::create(XrSwapchainCreateFlags p_create_flag
 		return false;
 	}
 
-	if (!xr_graphics_extension->get_swapchain_image_data(new_swapchain, p_swapchain_format, p_width, p_height, p_sample_count, p_array_size, &swapchain_graphics_data)) {
+	if (!xr_graphics_extension->get_swapchain_image_data(new_swapchain, p_swapchain_format, p_width, p_height, p_sample_count, p_array_size, p_usage_flags, &swapchain_graphics_data)) {
 		openxr_api->xrDestroySwapchain(new_swapchain);
 		return false;
 	}
@@ -296,11 +298,37 @@ RID OpenXRAPI::OpenXRSwapChainInfo::get_density_map() {
 	}
 }
 
+bool OpenXRAPI::OpenXRSwapChainInfo::copy_from_render_target(RID p_render_target, uint32_t p_layer) {
+	OpenXRAPI *openxr_api = OpenXRAPI::get_singleton();
+	ERR_FAIL_NULL_V(openxr_api, false);
+	ERR_FAIL_NULL_V(openxr_api->get_graphics_extension(), false);
+	ERR_FAIL_COND_V(!image_acquired, false);
+
+	return openxr_api->get_graphics_extension()->copy_render_target_layer(p_render_target, p_layer, swapchain_graphics_data, image_index);
+}
+
 ////////////////////////////////////
 // OpenXRAPI
 
 OpenXRAPI *OpenXRAPI::singleton = nullptr;
 Vector<OpenXRExtensionWrapper *> OpenXRAPI::registered_extension_wrappers;
+
+bool OpenXRAPI::is_running_on_android_emulator() {
+#ifdef ANDROID_ENABLED
+	static int emulator = -1;
+	if (emulator < 0) {
+		char value[PROP_VALUE_MAX] = {};
+		bool qemu = __system_property_get("ro.boot.qemu", value) > 0 && value[0] == '1';
+		if (!qemu) {
+			qemu = __system_property_get("ro.kernel.qemu", value) > 0 && value[0] == '1';
+		}
+		emulator = qemu ? 1 : 0;
+	}
+	return emulator == 1;
+#else
+	return false;
+#endif
+}
 
 bool OpenXRAPI::openxr_is_enabled(bool p_check_run_in_editor) {
 	if (XRServer::get_xr_mode() == XRServer::XRMODE_DEFAULT) {
@@ -1324,36 +1352,64 @@ bool OpenXRAPI::create_main_swapchains(const Size2i &p_size) {
 	render_state.main_swapchain_size = p_size;
 	uint32_t sample_count = 1;
 
+	const uint32_t view_count = render_state.primary_view_count;
+	const bool can_use_view_swapchains = graphics_extension->supports_render_target_layer_copy();
+
+	// The Android emulator's gralloc only allocates single-layer buffers, so a layered
+	// swapchain can't be created there; go straight to one swapchain per view.
+	render_state.use_view_swapchains = can_use_view_swapchains && is_running_on_android_emulator();
+
 	// We start with our color swapchain...
 	if (color_swapchain_format != 0) {
-		if (!render_state.main_swapchains[OPENXR_SWAPCHAIN_COLOR].create(0, XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT, color_swapchain_format, render_state.main_swapchain_size.width, render_state.main_swapchain_size.height, sample_count, render_state.primary_view_count, true)) {
-			return false;
-		}
+		if (render_state.use_view_swapchains) {
+			render_state.view_swapchains.resize(view_count);
+			for (uint32_t i = 0; i < view_count; i++) {
+				if (!render_state.view_swapchains[i].create(0, XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT, color_swapchain_format, render_state.main_swapchain_size.width, render_state.main_swapchain_size.height, sample_count, 1, false)) {
+					for (OpenXRSwapChainInfo &view_swapchain : render_state.view_swapchains) {
+						view_swapchain.queue_free();
+					}
+					render_state.view_swapchains.clear();
+					render_state.use_view_swapchains = false;
+					return false;
+				}
+				set_object_name(XR_OBJECT_TYPE_SWAPCHAIN, uint64_t(render_state.view_swapchains[i].get_swapchain()), "View color swapchain " + itos(i));
+			}
+			print_verbose("OpenXR: Rendering through one color swapchain per view.");
+		} else {
+			if (!render_state.main_swapchains[OPENXR_SWAPCHAIN_COLOR].create(0, XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT, color_swapchain_format, render_state.main_swapchain_size.width, render_state.main_swapchain_size.height, sample_count, view_count, true)) {
+				return false;
+			}
 
-		set_object_name(XR_OBJECT_TYPE_SWAPCHAIN, uint64_t(render_state.main_swapchains[OPENXR_SWAPCHAIN_COLOR].get_swapchain()), "Main color swapchain");
+			set_object_name(XR_OBJECT_TYPE_SWAPCHAIN, uint64_t(render_state.main_swapchains[OPENXR_SWAPCHAIN_COLOR].get_swapchain()), "Main color swapchain");
+		}
 	}
 
 	// We create our depth swapchain if:
 	// - we've enabled submitting depth buffer
 	// - we support our depth layer extension
 	// Note: Application Space Warp and Frame Synthesis use a separate lower resolution depth buffer.
-	if (depth_swapchain_format != 0 && submit_depth_buffer && OpenXRCompositionLayerDepthExtension::get_singleton()->is_available()) {
-		if (!render_state.main_swapchains[OPENXR_SWAPCHAIN_DEPTH].create(0, XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, depth_swapchain_format, render_state.main_swapchain_size.width, render_state.main_swapchain_size.height, sample_count, render_state.primary_view_count, true)) {
+	if (!render_state.use_view_swapchains && depth_swapchain_format != 0 && submit_depth_buffer && OpenXRCompositionLayerDepthExtension::get_singleton()->is_available()) {
+		if (!render_state.main_swapchains[OPENXR_SWAPCHAIN_DEPTH].create(0, XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, depth_swapchain_format, render_state.main_swapchain_size.width, render_state.main_swapchain_size.height, sample_count, view_count, true)) {
 			return false;
 		}
 
 		set_object_name(XR_OBJECT_TYPE_SWAPCHAIN, uint64_t(render_state.main_swapchains[OPENXR_SWAPCHAIN_DEPTH].get_swapchain()), "Main depth swapchain");
 	}
 
-	for (uint32_t i = 0; i < render_state.primary_view_count; i++) {
-		render_state.projection_views[i].subImage.swapchain = render_state.main_swapchains[OPENXR_SWAPCHAIN_COLOR].get_swapchain();
-		render_state.projection_views[i].subImage.imageArrayIndex = i;
+	for (uint32_t i = 0; i < view_count; i++) {
+		if (render_state.use_view_swapchains) {
+			render_state.projection_views[i].subImage.swapchain = render_state.view_swapchains[i].get_swapchain();
+			render_state.projection_views[i].subImage.imageArrayIndex = 0;
+		} else {
+			render_state.projection_views[i].subImage.swapchain = render_state.main_swapchains[OPENXR_SWAPCHAIN_COLOR].get_swapchain();
+			render_state.projection_views[i].subImage.imageArrayIndex = i;
+		}
 		render_state.projection_views[i].subImage.imageRect.offset.x = 0;
 		render_state.projection_views[i].subImage.imageRect.offset.y = 0;
 		render_state.projection_views[i].subImage.imageRect.extent.width = render_state.main_swapchain_size.width;
 		render_state.projection_views[i].subImage.imageRect.extent.height = render_state.main_swapchain_size.height;
 
-		if (render_state.submit_depth_buffer && OpenXRCompositionLayerDepthExtension::get_singleton()->is_available() && !render_state.depth_views.is_empty()) {
+		if (!render_state.use_view_swapchains && render_state.submit_depth_buffer && OpenXRCompositionLayerDepthExtension::get_singleton()->is_available() && !render_state.depth_views.is_empty()) {
 			render_state.depth_views[i].subImage.swapchain = render_state.main_swapchains[OPENXR_SWAPCHAIN_DEPTH].get_swapchain();
 			render_state.depth_views[i].subImage.imageArrayIndex = i;
 			render_state.depth_views[i].subImage.imageRect.offset.x = 0;
@@ -2774,6 +2830,12 @@ bool OpenXRAPI::process() {
 }
 
 void OpenXRAPI::free_main_swapchains() {
+	for (OpenXRSwapChainInfo &view_swapchain : render_state.view_swapchains) {
+		view_swapchain.queue_free();
+	}
+	render_state.view_swapchains.clear();
+	render_state.use_view_swapchains = false;
+
 	for (int i = 0; i < OPENXR_SWAPCHAIN_MAX; i++) {
 		render_state.main_swapchains[i].queue_free();
 	}
@@ -2877,6 +2939,13 @@ bool OpenXRAPI::pre_draw_viewport(RID p_render_target) {
 			}
 		}
 	}
+	for (OpenXRSwapChainInfo &view_swapchain : render_state.view_swapchains) {
+		if (!view_swapchain.is_image_acquired() && view_swapchain.get_swapchain() != XR_NULL_HANDLE) {
+			if (!view_swapchain.acquire(render_state.should_render)) {
+				return false;
+			}
+		}
+	}
 
 	for (OpenXRExtensionWrapper *wrapper : registered_extension_wrappers) {
 		wrapper->on_pre_draw_viewport(p_render_target);
@@ -2894,7 +2963,29 @@ XrSwapchain OpenXRAPI::get_color_swapchain() {
 RID OpenXRAPI::get_color_texture() {
 	ERR_NOT_ON_RENDER_THREAD_V(RID());
 
+	// With per-view swapchains we render into the render target's own layered
+	// texture and copy it out in post_draw_viewport.
+	if (render_state.use_view_swapchains) {
+		return RID();
+	}
+
 	return render_state.main_swapchains[OPENXR_SWAPCHAIN_COLOR].get_image();
+}
+
+bool OpenXRAPI::_is_color_image_acquired() const {
+	if (!render_state.use_view_swapchains) {
+		return render_state.main_swapchains[OPENXR_SWAPCHAIN_COLOR].is_image_acquired();
+	}
+
+	if (render_state.view_swapchains.is_empty()) {
+		return false;
+	}
+	for (const OpenXRSwapChainInfo &view_swapchain : render_state.view_swapchains) {
+		if (!view_swapchain.is_image_acquired()) {
+			return false;
+		}
+	}
+	return true;
 }
 
 RID OpenXRAPI::get_depth_texture() {
@@ -2963,6 +3054,13 @@ void OpenXRAPI::post_draw_viewport(RID p_render_target) {
 		return;
 	}
 
+	render_state.view_copies_valid = true;
+	for (uint32_t i = 0; i < render_state.view_swapchains.size(); i++) {
+		if (!render_state.view_swapchains[i].is_image_acquired() || !render_state.view_swapchains[i].copy_from_render_target(p_render_target, i)) {
+			render_state.view_copies_valid = false;
+		}
+	}
+
 	for (OpenXRExtensionWrapper *wrapper : registered_extension_wrappers) {
 		wrapper->on_post_draw_viewport(p_render_target);
 	}
@@ -2983,7 +3081,7 @@ void OpenXRAPI::end_frame() {
 	if (render_state.should_render && render_state.view_pose_valid) {
 		if (!render_state.has_xr_viewport) {
 			print_line("OpenXR: No viewport was marked with use_xr, there is no rendered output!");
-		} else if (!render_state.main_swapchains[OPENXR_SWAPCHAIN_COLOR].is_image_acquired()) {
+		} else if (!_is_color_image_acquired()) {
 			print_line("OpenXR: No swapchain could be acquired to render to!");
 		}
 	}
@@ -3013,7 +3111,10 @@ void OpenXRAPI::end_frame() {
 	// - should_render set to true
 	// - a valid view pose for projection_views[eye].pose to submit layer
 	// - an image to render
-	if (!render_state.should_render || !render_state.view_pose_valid || !render_state.main_swapchains[OPENXR_SWAPCHAIN_COLOR].is_image_acquired()) {
+	// Per-view swapchains hold this frame only once post_draw_viewport copied into them.
+	const bool view_copies_valid = !render_state.use_view_swapchains || render_state.view_copies_valid;
+	render_state.view_copies_valid = false;
+	if (!render_state.should_render || !render_state.view_pose_valid || !_is_color_image_acquired() || !view_copies_valid) {
 		// submit 0 layers when we shouldn't render
 		XrFrameEndInfo frame_end_info = {
 			XR_TYPE_FRAME_END_INFO, // type
@@ -3039,6 +3140,11 @@ void OpenXRAPI::end_frame() {
 	for (int i = 0; i < OPENXR_SWAPCHAIN_MAX; i++) {
 		if (render_state.main_swapchains[i].is_image_acquired()) {
 			render_state.main_swapchains[i].release();
+		}
+	}
+	for (OpenXRSwapChainInfo &view_swapchain : render_state.view_swapchains) {
+		if (view_swapchain.is_image_acquired()) {
+			view_swapchain.release();
 		}
 	}
 
@@ -3087,7 +3193,7 @@ void OpenXRAPI::end_frame() {
 	render_state.projection_layer.viewCount = (uint32_t)render_state.projection_views.size();
 	render_state.projection_layer.views = render_state.projection_views.ptr();
 
-	const bool submit_depth_views = render_state.submit_depth_buffer && OpenXRCompositionLayerDepthExtension::get_singleton()->is_available() && !render_state.depth_views.is_empty();
+	const bool submit_depth_views = !render_state.use_view_swapchains && render_state.submit_depth_buffer && OpenXRCompositionLayerDepthExtension::get_singleton()->is_available() && !render_state.depth_views.is_empty();
 	for (uint32_t v = 0; v < render_state.projection_views.size(); v++) {
 		void *next_pointer = nullptr;
 		// Start next chain with depth_views if submitting the depth buffer since this is handled here as a special case currently.

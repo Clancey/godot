@@ -359,6 +359,10 @@ bool OpenXRSpatialEntityExtension::on_event_polled(const XrEventDataBuffer &even
 
 			// TODO: Should maybe keep a HashMap for a reverse lookup.
 
+			// TEMPORARY INSTRUMENTATION: this event is the ONLY thing that can
+			// re-trigger entity discovery after the initial pass.
+			print_line("OpenXR marker debug: received XR_TYPE_EVENT_DATA_SPATIAL_DISCOVERY_RECOMMENDED_EXT from the runtime");
+
 			LocalVector<RID> spatial_context_rids = spatial_context_owner.get_owned_list();
 			for (const RID &rid : spatial_context_rids) {
 				if (get_spatial_context_handle(rid) == eventdata->spatialContext) {
@@ -413,6 +417,13 @@ Ref<OpenXRFutureResult> OpenXRSpatialEntityExtension::create_spatial_context(con
 	XrFutureEXT future = XR_NULL_HANDLE;
 	XrResult xr_result = xrCreateSpatialContextAsyncEXT(openxr_api->get_session(), &create_info, &future);
 	if (XR_FAILED(xr_result)) {
+		// Report the reason for the failure so our caller can act on it,
+		// this call can for instance fail with XR_ERROR_PERMISSION_INSUFFICIENT
+		// when the user hasn't granted the required permissions (yet).
+		if (p_failure_callback.is_valid()) {
+			p_failure_callback.call(int(xr_result), false);
+		}
+
 		// Not successful? then exit.
 		ERR_FAIL_V_MSG(Ref<OpenXRFutureResult>(), "OpenXR: Failed to create spatial context [" + openxr_api->get_error_string(xr_result) + "]");
 	}

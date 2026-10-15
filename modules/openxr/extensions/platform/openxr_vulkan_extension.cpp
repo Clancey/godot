@@ -34,8 +34,15 @@
 #include "../openxr_fb_foveation_extension.h"
 
 #include "core/string/print_string.h"
+#include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_server.h"
+
+#ifdef ANDROID_ENABLED
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 HashMap<String, bool *> OpenXRVulkanExtension::get_requested_extensions(XrVersion p_version) {
 	HashMap<String, bool *> request_extensions;
@@ -238,9 +245,49 @@ bool OpenXRVulkanExtension::use_subsampled_images() {
 
 XrGraphicsBindingVulkanKHR OpenXRVulkanExtension::graphics_binding_vulkan;
 
+#ifdef ANDROID_ENABLED
+// The Android XR runtime's session compositor asks for a protected queue with
+// vkGetDeviceQueue2. The emulator's gfxstream host refuses, but the guest driver
+// still returns a non-null queue wrapping host handle 0, so every compositor
+// submit is lost and the whole emulator hangs waiting on fences.
+// The runtime skips the protected queue when /proc/self/maps names the RenderDoc
+// GLES layer, so on the emulator we map an empty memfd with that name before
+// the session is created. The mapping is kept for the life of the process.
+static void _emulator_avoid_protected_queue() {
+	static bool done = false;
+	if (done) {
+		return;
+	}
+	done = true;
+
+	int fd = (int)syscall(__NR_memfd_create, "libVkLayer_GLES_RenderDoc.so", 0);
+	if (fd < 0) {
+		WARN_PRINT("OpenXR: Couldn't create the emulator protected queue workaround.");
+		return;
+	}
+	const long page_size = sysconf(_SC_PAGESIZE);
+	void *mapping = MAP_FAILED;
+	if (ftruncate(fd, page_size) == 0) {
+		mapping = mmap(nullptr, page_size, PROT_READ, MAP_SHARED, fd, 0);
+	}
+	close(fd);
+	if (mapping == MAP_FAILED) {
+		WARN_PRINT("OpenXR: Couldn't map the emulator protected queue workaround.");
+		return;
+	}
+	print_verbose("OpenXR: Android emulator detected, steering the runtime away from protected queues.");
+}
+#endif
+
 void *OpenXRVulkanExtension::set_session_create_and_get_next_pointer(void *p_next_pointer) {
 	DEV_ASSERT(vulkan_queue_family_index < UINT32_MAX && "Direct queue family index was not specified yet.");
 	DEV_ASSERT(vulkan_queue_index < UINT32_MAX && "Direct queue index was not specified yet.");
+
+#ifdef ANDROID_ENABLED
+	if (OpenXRAPI::is_running_on_android_emulator()) {
+		_emulator_avoid_protected_queue();
+	}
+#endif
 
 	graphics_binding_vulkan.type = XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR;
 	graphics_binding_vulkan.next = p_next_pointer;
@@ -272,7 +319,7 @@ void OpenXRVulkanExtension::get_usable_depth_formats(Vector<int64_t> &p_usable_s
 	p_usable_swap_chains.push_back(VK_FORMAT_D32_SFLOAT);
 }
 
-bool OpenXRVulkanExtension::get_swapchain_image_data(XrSwapchain p_swapchain, int64_t p_swapchain_format, uint32_t p_width, uint32_t p_height, uint32_t p_sample_count, uint32_t p_array_size, void **r_swapchain_graphics_data) {
+bool OpenXRVulkanExtension::get_swapchain_image_data(XrSwapchain p_swapchain, int64_t p_swapchain_format, uint32_t p_width, uint32_t p_height, uint32_t p_sample_count, uint32_t p_array_size, XrSwapchainUsageFlags p_usage_flags, void **r_swapchain_graphics_data) {
 	LocalVector<XrSwapchainImageVulkanKHR> images;
 	LocalVector<XrSwapchainImageFoveationVulkanFB> density_images;
 
@@ -403,6 +450,10 @@ bool OpenXRVulkanExtension::get_swapchain_image_data(XrSwapchain p_swapchain, in
 			break;
 	}
 
+	if (p_usage_flags & XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT) {
+		usage_flags |= RenderingDevice::TEXTURE_USAGE_CAN_COPY_TO_BIT;
+	}
+
 	Vector<RID> texture_rids;
 	Vector<RID> density_map_rids;
 
@@ -476,6 +527,43 @@ RID OpenXRVulkanExtension::get_density_map(void *p_swapchain_graphics_data, int 
 
 	ERR_FAIL_INDEX_V(p_image_index, data->density_map_rids.size(), RID());
 	return data->density_map_rids[p_image_index];
+}
+
+// A raw image copy needs the same texel size and keeps the channel order, so only
+// 8-bit RGBA to RGBA (or BGRA to BGRA) is safe; UNORM and SRGB share the bytes.
+static int _copy_class(RenderingDevice::DataFormat p_format) {
+	switch (p_format) {
+		case RenderingDevice::DATA_FORMAT_R8G8B8A8_UNORM:
+		case RenderingDevice::DATA_FORMAT_R8G8B8A8_SRGB:
+			return 1;
+		case RenderingDevice::DATA_FORMAT_B8G8R8A8_UNORM:
+		case RenderingDevice::DATA_FORMAT_B8G8R8A8_SRGB:
+			return 2;
+		default:
+			return 0;
+	}
+}
+
+bool OpenXRVulkanExtension::copy_render_target_layer(RID p_render_target, uint32_t p_layer, void *p_swapchain_graphics_data, int p_image_index) {
+	RID dst_texture = get_texture(p_swapchain_graphics_data, p_image_index);
+	ERR_FAIL_COND_V(dst_texture.is_null(), false);
+
+	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
+	ERR_FAIL_NULL_V(texture_storage, false);
+	RID src_texture = texture_storage->render_target_get_rd_texture(p_render_target);
+	ERR_FAIL_COND_V(src_texture.is_null(), false);
+
+	RenderingDevice *rendering_device = RenderingDevice::get_singleton();
+	ERR_FAIL_NULL_V(rendering_device, false);
+
+	const RenderingDevice::TextureFormat src_format = rendering_device->texture_get_format(src_texture);
+	const RenderingDevice::TextureFormat dst_format = rendering_device->texture_get_format(dst_texture);
+	ERR_FAIL_COND_V_MSG(p_layer >= src_format.array_layers, false, vformat("OpenXR: Render target has no layer %d to copy.", p_layer));
+	const int copy_class = _copy_class(src_format.format);
+	ERR_FAIL_COND_V_MSG(copy_class == 0 || copy_class != _copy_class(dst_format.format), false, "OpenXR: Render target and swapchain formats aren't copy-compatible (use an 8-bit viewport).");
+
+	const Vector3 size(MIN(src_format.width, dst_format.width), MIN(src_format.height, dst_format.height), 1);
+	return rendering_device->texture_copy(src_texture, dst_texture, Vector3(), Vector3(), size, 0, 0, p_layer, 0) == OK;
 }
 
 void OpenXRVulkanExtension::cleanup_swapchain_graphics_data(void **p_swapchain_graphics_data) {

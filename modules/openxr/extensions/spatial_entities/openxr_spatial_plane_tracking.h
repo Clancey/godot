@@ -263,6 +263,16 @@ private:
 	Ref<OpenXRFutureResult> built_in_future;
 	RID spatial_context;
 
+	// Retry logic for our built-in tracking, used when we're (not yet) allowed to track planes.
+	static const int BUILT_IN_MAX_RETRIES = 30;
+	static const int BUILT_IN_RETRY_COOLDOWN = 120; // In frames, doesn't need to be an exact science.
+	int built_in_retries_left = 0;
+	int built_in_retry_cooldown = BUILT_IN_RETRY_COOLDOWN;
+
+	// Frames to wait between plane discovery queries. Discovery is also what keeps
+	// known planes up to date here, so we keep this interval short.
+	static const int PLANE_DISCOVERY_COOLDOWN = 60;
+
 	bool need_discovery = false;
 	int discovery_cooldown = 0;
 	Ref<OpenXRFutureResult> discovery_query_result;

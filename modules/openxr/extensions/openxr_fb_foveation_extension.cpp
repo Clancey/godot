@@ -30,6 +30,7 @@
 
 #include "openxr_fb_foveation_extension.h"
 
+#include "../openxr_api.h"
 #include "../openxr_platform_inc.h"
 #include "openxr_eye_gaze_interaction.h"
 
@@ -96,7 +97,9 @@ HashMap<String, bool *> OpenXRFBFoveationExtension::get_requested_extensions(XrV
 	request_extensions[XR_FB_FOVEATION_CONFIGURATION_EXTENSION_NAME] = &fb_foveation_configuration_ext;
 
 #ifdef XR_USE_GRAPHICS_API_VULKAN
-	if (rendering_driver == "vulkan") {
+	// The Android emulator's Vulkan driver lacks the fragment density map extensions
+	// the runtime adds to the device for Vulkan foveation, so device creation fails.
+	if (rendering_driver == "vulkan" && !OpenXRAPI::is_running_on_android_emulator()) {
 		request_extensions[XR_FB_FOVEATION_VULKAN_EXTENSION_NAME] = &fb_foveation_vulkan_ext;
 		request_extensions[XR_META_VULKAN_SWAPCHAIN_CREATE_INFO_EXTENSION_NAME] = &meta_vulkan_swapchain_create_info_ext;
 
