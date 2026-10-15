@@ -211,6 +211,10 @@ private:
 		SafeNumeric<uint32_t> cached_render_target_width{ 0 };
 		SafeNumeric<uint32_t> cached_render_target_height{ 0 };
 
+		// Size last handed to the engine, which may lag the newly acquired output.
+		SafeNumeric<uint32_t> reported_render_target_width{ 0 };
+		SafeNumeric<uint32_t> reported_render_target_height{ 0 };
+
 	public:
 		void initialize();
 		void uninitialize();

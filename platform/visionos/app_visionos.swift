@@ -365,14 +365,20 @@ struct ContentStageConfiguration: CompositorLayerConfiguration {
 		configuration.colorFormat = .rgba16Float
 
 		let foveationEnabled = capabilities.supportsFoveation
-		configuration.isFoveationEnabled = foveationEnabled
 
 		let options: LayerRenderer.Capabilities.SupportedLayoutsOptions = foveationEnabled ? [.foveationEnabled] : []
 		let supportedLayouts = capabilities.supportedLayouts(options: options)
-		if (!supportedLayouts.contains(.layered)) {
-			fatalError("Only the .layered layout is supported by Godot's visionOS XR module.")
+		if supportedLayouts.contains(.layered) {
+			configuration.layout = .layered
+			configuration.isFoveationEnabled = foveationEnabled
+		} else if capabilities.supportedLayouts(options: []).contains(.dedicated) {
+			// Some simulator runtimes only expose a dedicated, monoscopic target.
+			configuration.layout = .dedicated
+			configuration.isFoveationEnabled = false
+			Logger.godot.log("Using the dedicated compositor layout without foveation (.layered unavailable)")
+		} else {
+			fatalError("Godot's visionOS XR module requires the .layered or monoscopic .dedicated layout.")
 		}
-		configuration.layout = .layered
 
 		if GDTAppDelegateServiceVisionOS.isDynamicRenderQualityEnabled {
 			let maxRenderQuality = GDTAppDelegateServiceVisionOS.maxRenderQuality

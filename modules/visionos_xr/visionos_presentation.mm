@@ -502,19 +502,34 @@ void VisionOSPresentation::present() {
 		return;
 	}
 	cp_drawable_t drawable = frame.get_drawable();
-	if (presenter.is_stopping()) {
+	// Every drawable acquired during submission must be presented, even when
+	// cancellation, invalid topology or an encoder failure prevents rendering.
+	auto finish_unused_drawable = [&](id<MTLCommandBuffer> p_command = nil) {
+		id<MTLCommandBuffer> command = p_command ? p_command : [queue commandBuffer];
+		if (command) {
+			cp_drawable_encode_present(drawable, command);
+			[command commit];
+			frame.consume_drawable();
+		}
 		frame.finish();
+	};
+	if (presenter.is_stopping()) {
+		finish_unused_drawable();
 		return;
 	}
-	id<MTLTexture> color = cp_drawable_get_color_texture(drawable, 0);
-	id<MTLTexture> depth = cp_drawable_get_depth_texture(drawable, 0);
-	// The device is layered stereo; the visionOS simulator presents one layered view.
+	// Probe counts before indexing textures. Dedicated stereo is unsupported:
+	// CompositorServices render contexts support layered targets or a single view.
+	const size_t texture_count = cp_drawable_get_texture_count(drawable);
+	id<MTLTexture> color = texture_count ? cp_drawable_get_color_texture(drawable, 0) : nil;
+	id<MTLTexture> depth = texture_count ? cp_drawable_get_depth_texture(drawable, 0) : nil;
 	const size_t drawable_views = cp_drawable_get_view_count(drawable);
-	if (!color || !depth || color.textureType != MTLTextureType2DArray || (drawable_views != 1 && drawable_views != 2) ||
-			color.arrayLength != drawable_views) {
-		NSLog(@"visionOS compositor requires complete layered targets (color=%d depth=%d type=%d layers=%d views=%d).", color != nil, depth != nil, color ? (int)color.textureType : -1, color ? (int)color.arrayLength : -1, (int)drawable_views);
+	const bool layered = color && depth && color.textureType == MTLTextureType2DArray && depth.textureType == MTLTextureType2DArray &&
+			color.arrayLength == drawable_views && depth.arrayLength == drawable_views;
+	const bool mono = drawable_views == 1 && color && depth && color.textureType == MTLTextureType2D && depth.textureType == MTLTextureType2D;
+	if (texture_count != 1 || drawable_views != VISIONOS_RENDER_VIEW_COUNT || (!layered && !mono)) {
+		NSLog(@"visionOS compositor requires complete layered or mono targets (textures=%d color=%d depth=%d type=%d layers=%d views=%d).", (int)texture_count, color != nil, depth != nil, color ? (int)color.textureType : -1, color ? (int)color.arrayLength : -1, (int)drawable_views);
 		presenter.get_completions()->startup.fail();
-		frame.finish();
+		finish_unused_drawable();
 		stop();
 		return;
 	}
@@ -557,7 +572,7 @@ void VisionOSPresentation::present() {
 		}
 		cp_drawable_set_depth_range(drawable, snapshot->depth_range);
 		for (uint32_t eye = 0; eye < 2; eye++) {
-			// Godot always renders stereo; with a mono drawable both eyes render its single view.
+			// Keep the fixed-size geometry well formed even when rendering mono.
 			const uint32_t view_index = MIN(eye, uint32_t(drawable_views - 1));
 			cp_view_t view = cp_drawable_get_view(drawable, view_index);
 			cp_view_texture_map_t map = cp_view_get_view_texture_map(view);
@@ -576,7 +591,7 @@ void VisionOSPresentation::present() {
 			if (cp_view_texture_map_get_texture_index(map) != 0 || cp_view_texture_map_get_slice_index(map) != view_index) {
 				NSLog(@"visionOS compositor returned an unsupported stereo texture mapping.");
 				presenter.get_completions()->startup.fail();
-				frame.finish();
+				finish_unused_drawable();
 				stop();
 				return;
 			}
@@ -640,7 +655,9 @@ void VisionOSPresentation::present() {
 	std::array<VisionOSEyeTransformComparison, 2> eye_comparisons{};
 	if (!command || !transfer(drawable, command, output, acquired_eyes, transferred_scene, eye_comparisons)) {
 		NSLog(@"visionOS compositor could not encode its bounded presentation pass.");
-		frame.finish();
+		// transfer() only fails before creating an encoder, so this buffer is
+		// safe to present and commit even when it has no scene commands.
+		finish_unused_drawable(command);
 		presenter.get_completions()->startup.set_frame_state(VisionOSStartupStatus::FRAME_UNAVAILABLE);
 		if (startup_diagnostics) {
 			startup_diagnostics->sample(CACurrentMediaTime(), VisionOSStartupDiagnostics::ENCODING_FAILED, diagnostic_source, eye_comparisons);
@@ -812,7 +829,7 @@ bool VisionOSPresentation::transfer(cp_drawable_t p_drawable, id<MTLCommandBuffe
 	pass.depthAttachment.loadAction = MTLLoadActionClear;
 	pass.depthAttachment.clearDepth = 0;
 	pass.depthAttachment.storeAction = MTLStoreActionStore;
-	pass.renderTargetArrayLength = drawable_views;
+	pass.renderTargetArrayLength = pass.colorAttachments[0].texture.textureType == MTLTextureType2DArray ? drawable_views : 0;
 	if (cp_drawable_get_rasterization_rate_map_count(p_drawable)) {
 		pass.rasterizationRateMap = cp_drawable_get_rasterization_rate_map(p_drawable, 0);
 		pass.renderTargetWidth = pass.rasterizationRateMap.screenSize.width;

@@ -892,7 +892,7 @@ TypedArray<Projection> VisionOSXRInterface::get_camera_projections(const StringN
 	if (scaled_z_near < minimum_supported_near_plane) {
 		// Returning no projections would make XRServer fall back to the deprecated per-view path,
 		// which has no frame to read from, so clamp instead and let the frame render.
-		WARN_PRINT_ONCE("Your XRCamera3D Near value is lower than the minimum value supported by the visionOS platform, so it is clamped. Make sure that Near divided by XROrigin's World Scale is higher than or equal to the value returned by LayerRender.Capabilities.supportedMinimumNearPlaneDistance. This value is 0.1 for Apple Vision Pro.");
+		WARN_PRINT_ONCE(vformat("visionOS: XRCamera3D near plane %f (world scale %f -> %f) is below the compositor's reported minimum of %f; it is clamped.", p_z_near, world_scale, scaled_z_near, minimum_supported_near_plane));
 		scaled_z_near = minimum_supported_near_plane;
 		scaled_z_far = MAX(scaled_z_far, scaled_z_near + CMP_EPSILON);
 	}
@@ -1137,8 +1137,13 @@ Rect2i VisionOSXRInterface::RenderThread::get_render_region() {
 }
 
 Size2 VisionOSXRInterface::RenderThread::get_render_target_size() {
-	// Read atomic values cached by pre_render().
-	return Size2(cached_render_target_width.get(), cached_render_target_height.get());
+	// Viewport::_check_xr_size() sizes the engine target from this value.
+	// No truthful dimensions are available until the first output is acquired.
+	const uint32_t width = cached_render_target_width.get();
+	const uint32_t height = cached_render_target_height.get();
+	reported_render_target_width.set(width);
+	reported_render_target_height.set(height);
+	return Size2(width, height);
 }
 
 void VisionOSXRInterface::RenderThread::pre_render() {
@@ -1175,6 +1180,20 @@ void VisionOSXRInterface::RenderThread::pre_render() {
 bool VisionOSXRInterface::RenderThread::pre_draw_viewport() {
 	ERR_NOT_ON_RENDER_THREAD_V(false);
 	diagnostic_viewport_drawn = initialized && scene_output != nullptr;
+	if (diagnostic_viewport_drawn) {
+		// The engine may still have the previous size when pre_render() acquires
+		// a new output. Do not override that target with differently sized textures:
+		// the resulting invalid framebuffer poisons startup pipeline compilation.
+		const uint32_t reported_width = reported_render_target_width.get();
+		const uint32_t reported_height = reported_render_target_height.get();
+		if (scene_output->color.width != reported_width || scene_output->color.height != reported_height) {
+			print_verbose(vformat("VisionOSXRInterface: skipping frame, compositor is %dx%d but the engine was last told %dx%d",
+					(int)scene_output->color.width, (int)scene_output->color.height,
+					(int)reported_width, (int)reported_height));
+			diagnostic_viewport_drawn = false;
+			return false;
+		}
+	}
 	return diagnostic_viewport_drawn;
 }
 
