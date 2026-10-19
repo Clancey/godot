@@ -88,6 +88,18 @@ StringName VisionOSXRInterface::get_signal_name(SignalEnum p_signal) {
 }
 
 void VisionOSXRInterface::emit_signal_enum(SignalEnum p_signal) {
+	switch (p_signal) {
+		case VISIONOS_XR_SIGNAL_SESSION_STARTED:
+		case VISIONOS_XR_SIGNAL_SESSION_RESUMED:
+			scene_understanding.set_image_tracking_session_active(true);
+			break;
+		case VISIONOS_XR_SIGNAL_SESSION_PAUSED:
+		case VISIONOS_XR_SIGNAL_SESSION_INVALIDATED:
+			scene_understanding.set_image_tracking_session_active(false);
+			break;
+		default:
+			break;
+	}
 	emit_signal(get_signal_name(p_signal));
 }
 
@@ -265,6 +277,11 @@ bool VisionOSXRInterface::initialize() {
 	}
 
 	// Scene understanding
+	// An interface can be reinitialized without another compositor start event.
+	const auto current_presentation = visionos_get_presentation();
+	scene_understanding.set_image_tracking_session_active(!cs.enabled ||
+			(current_presentation && cp_layer_renderer_get_state(cs.layer_renderer) == cp_layer_renderer_state_running &&
+					!current_presentation->is_stopped()));
 	scene_understanding.initialize(ar_session, cs.world_tracking_provider);
 
 	spatial_events.initialize(xr_server, left_hand, right_hand);

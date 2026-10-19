@@ -163,7 +163,7 @@ jobs:
           ls -l bin/
           # The editor resolves export templates by platform name, so the bundle must be `visionos.zip`.
           mv bin/godot_visionos.zip visionos.zip
-          unzip -l visionos.zip | head -40
+          unzip -l visionos.zip | sed -n '1,40p'
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -288,6 +288,56 @@ jobs:
   # built from the same commit as the editor. Final files are uploaded as `tpl-*` artifacts using
   # the standard Godot export template file names; intermediate build outputs use `build-*`.
   # ---------------------------------------------------------------------------------------------
+
+  image-tracking-tests:
+    name: Native image tracking lifecycle tests
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/godot-deps
+      - uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: visionos-image-tests
+        continue-on-error: true
+      - name: Build editor with tests
+        uses: ./.github/actions/godot-build
+        with:
+          platform: macos
+          target: editor
+          scons-flags: arch=arm64 tests=yes vulkan=no accesskit=no
+      - name: Run native image and shared world-anchor lifecycle tests
+        run: bin/godot.macos.editor.arm64 --headless --test --test-case='[visionOS][ImageTracking]*,[visionOS][WorldAnchors]*'
+      - uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: visionos-image-tests
+        continue-on-error: true
+
+  visionos-link:
+    name: Link matching visionOS editor and templates
+    needs: [editor, templates]
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-editor
+          path: pair
+      - uses: actions/download-artifact@v8
+        with:
+          name: visionos-templates
+          path: pair
+      - name: Link unsigned immersive app (device and simulator)
+        run: |
+          chmod +x pair/godot.macos.editor.universal
+          bash misc/scripts/validate_visionos_export.sh pair/godot.macos.editor.universal pair/visionos.zip link-check
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: visionos-link-logs
+          path: link-check/*.log
+          retention-days: 7
 
   # iOS export template: device arm64, debug + release, bundled into ios.zip (Xcode project).
   ios-templates:
@@ -608,7 +658,7 @@ jobs:
         uses: ./.github/actions/godot-deps
 
       - name: Download Direct3D 12 SDK components
-        shell: sh
+        shell: bash
         id: d3d12-sdk
         run: |
           if python ./misc/scripts/install_d3d12_sdk_windows.py; then
@@ -620,7 +670,7 @@ jobs:
         continue-on-error: true
 
       - name: Download pre-built ANGLE
-        shell: sh
+        shell: bash
         id: angle-sdk
         run: |
           if python ./misc/scripts/install_angle.py; then
@@ -631,7 +681,7 @@ jobs:
           fi
 
       - name: Download pre-built AccessKit
-        shell: sh
+        shell: bash
         id: accesskit-sdk
         run: |
           if python ./misc/scripts/install_accesskit.py; then
@@ -872,6 +922,8 @@ jobs:
       - metadata
       - templates
       - editor
+      - image-tracking-tests
+      - visionos-link
       - ios-templates
       - macos-templates
       - linux-templates
@@ -943,7 +995,7 @@ jobs:
           (cd full && zip -r -y ../release/godot_export_templates.tpz templates)
           unzip -l release/godot_export_templates.tpz
 
-          (cd release && shasum -a 256 * > SHA256SUMS.txt)
+          (cd release && shasum -a 256 ./* > SHA256SUMS.txt)
           ls -l release
 
       - name: Write release notes

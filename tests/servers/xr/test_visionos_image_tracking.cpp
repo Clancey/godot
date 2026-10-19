@@ -260,6 +260,64 @@ TEST_CASE("[visionOS][ImageTracking] Unknown names and invalid geometry never pr
 	CHECK_FALSE(provider.store->get_observations()[0].tracked);
 }
 
+TEST_CASE("[visionOS][ImageTracking] Nameless removal before first observation prevents late resurrection") {
+	Provider provider;
+	Store::Observation removal;
+	removal.uuid = "anchor";
+	removal.removed = true;
+	removal.observation_time = 20;
+	removal.received_ticks_usec = 200;
+	const auto status = provider.store->get_status();
+	provider.store->update(provider.token, status.generation, removal);
+	CHECK_FALSE(provider.observe(19, 210));
+	CHECK_FALSE(provider.observe(20, 220));
+	CHECK_FALSE(provider.observe(21, 230));
+	// The fence belongs to the old provider, not to a newly registered set.
+	provider.token = provider.store->replace({ { "room-7", OK, "" } }, true);
+	provider.store->provider_changed(provider.token, State::RUNNING);
+	CHECK(provider.observe(21, 240));
+}
+
+TEST_CASE("[visionOS][ImageTracking] Authorization restoration cannot reuse the previous running epoch") {
+	Provider provider;
+	REQUIRE(provider.observe());
+	const auto before = provider.store->get_status();
+	provider.store->set_authorization("denied");
+	CHECK_FALSE(provider.store->get_status().running);
+	provider.store->set_authorization("allowed");
+	// A stale sampled RUNNING state must not make old observations usable.
+	CHECK_FALSE(provider.store->get_observation("anchor", before.generation).tracked);
+	CHECK_FALSE(provider.store->update(provider.token, before.generation, provider.store->get_observations()[0]));
+}
+
+TEST_CASE("[visionOS][ImageTracking] Compositor pause gates a still-running ARKit provider") {
+	Provider provider;
+	REQUIRE(provider.observe());
+	const auto before = provider.store->get_status();
+	const auto queued = provider.store->get_observations()[0];
+	provider.store->set_session_active(false);
+	auto paused = provider.store->get_status();
+	CHECK_FALSE(paused.running);
+	CHECK_FALSE(paused.session_active);
+	CHECK(paused.provider_state == State::RUNNING);
+	CHECK_FALSE(provider.store->get_observation("anchor", before.generation).tracked);
+	provider.store->provider_changed(provider.token, State::RUNNING, OK, "", paused.state_revision);
+	CHECK_FALSE(provider.store->get_status().running);
+	CHECK_FALSE(provider.observe(11));
+	provider.store->set_session_active(true);
+	const auto resumed = provider.store->get_status();
+	CHECK(resumed.running);
+	CHECK(resumed.generation != before.generation);
+	CHECK(resumed.reference_revision == before.reference_revision);
+	CHECK_FALSE(provider.store->update(provider.token, before.generation, queued));
+	CHECK_FALSE(provider.store->get_observation("anchor", before.generation).tracked);
+	CHECK(provider.observe(11));
+	provider.store->set_session_active(false);
+	provider.store->stop();
+	provider.store->set_session_active(true);
+	CHECK_FALSE(provider.store->get_status().running);
+}
+
 TEST_CASE("[visionOS][ImageTracking] Stop keeps staged identity but never reuses an observation epoch") {
 	Provider provider;
 	REQUIRE(provider.observe());

@@ -312,6 +312,12 @@ void VisionOSSceneUnderstanding::set_image_tracking_authorization_error(const St
 	image_store->set_authorization(status.authorization, FAILED, p_message.utf8().get_data());
 }
 
+void VisionOSSceneUnderstanding::set_image_tracking_session_active(bool p_active) {
+	image_store->set_session_active(p_active);
+	// Invalidate retained tracker poses before lifecycle signal listeners run.
+	process_marker_updates();
+}
+
 static Array image_reference_results(const std::vector<VisionOSImageTrackingStore::ReferenceResult> &p_results) {
 	Array results;
 	for (const auto &reference : p_results) {
@@ -330,6 +336,7 @@ Dictionary VisionOSSceneUnderstanding::get_image_tracking_status() {
 	Dictionary result;
 	result["supported"] = status.supported;
 	result["enabled"] = status.enabled;
+	result["session_active"] = status.session_active;
 	result["authorization"] = String::utf8(status.authorization.c_str());
 	result["authorization_error"] = status.authorization_error;
 	result["authorization_error_message"] = String::utf8(status.authorization_error_message.c_str());
@@ -515,7 +522,7 @@ void VisionOSSceneUnderstanding::install_image_handler() {
 	const uint64_t generation = installed_status.generation;
 	image_handler_generation = generation;
 	ar_image_tracking_provider_set_update_handler(image_tracking_provider,
-			dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
+			image_callback_queue,
 			^(ar_image_anchors_t added, ar_image_anchors_t updated, ar_image_anchors_t removed) {
 				const auto status = store->get_status();
 				if (status.provider_token != token || status.generation != generation || !status.running) {
@@ -1245,7 +1252,7 @@ void VisionOSSceneUnderstanding::install_provider_state_handler() {
 		const uint64_t image_token = image_store->get_status().provider_token;
 		const ar_image_tracking_provider_t image_provider = image_tracking_provider;
 		ar_session_set_data_provider_state_change_handler(ar_session,
-				dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
+				image_callback_queue,
 				^(ar_data_providers_t providers, ar_data_provider_state_t state, ar_error_t error, ar_data_provider_t failed_provider) {
 					__block bool world_changed = block_provider != nullptr && (failed_provider == block_provider || (error != nullptr && failed_provider == nullptr));
 					__block bool image_changed = image_provider != nullptr && (failed_provider == image_provider || (error != nullptr && failed_provider == nullptr));

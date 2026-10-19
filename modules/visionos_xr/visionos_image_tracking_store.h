@@ -70,6 +70,7 @@ public:
 	struct Status {
 		bool supported = false;
 		bool enabled = false;
+		bool session_active = true;
 		std::string authorization = "not_determined";
 		int authorization_error = OK;
 		std::string authorization_error_message;
@@ -115,12 +116,21 @@ private:
 	}
 
 	void refresh_running_locked() {
-		status.running = status.supported && status.enabled && status.authorization == "allowed" &&
+		status.running = status.supported && status.enabled && status.session_active && status.authorization == "allowed" &&
 				status.authorization_error == OK && status.registration_state == "registered" &&
 				status.provider_state == ProviderState::RUNNING;
 	}
 
 public:
+	void set_session_active(bool p_active) {
+		std::lock_guard<std::mutex> lock(mutex);
+		if (status.session_active != p_active) {
+			invalidate_locked();
+			status.session_active = p_active;
+		}
+		refresh_running_locked();
+	}
+
 	void configure(bool p_supported, bool p_enabled) {
 		std::lock_guard<std::mutex> lock(mutex);
 		if (status.supported != p_supported || status.enabled != p_enabled) {
@@ -252,7 +262,9 @@ public:
 		for (const ReferenceResult &reference : status.references) {
 			registered |= reference.name == p_observation.name && reference.error == OK;
 		}
-		if (!registered) {
+		// Native removals have only a UUID, including when their add callback has
+		// not arrived yet. Keep a provider-scoped tombstone to fence late adds.
+		if (!registered && !p_observation.removed) {
 			return false;
 		}
 		p_observation.tracked = p_observation.tracked && !p_observation.removed &&

@@ -46,6 +46,7 @@
 #include "core/templates/local_vector.h"
 #include "core/templates/safe_refcount.h"
 
+#include <dispatch/dispatch.h>
 #include <uuid/uuid.h>
 
 #include <memory>
@@ -81,6 +82,7 @@ public:
 	Dictionary get_image_tracking_status();
 	void set_image_tracking_authorization(VisionOSAuthorizationStatus p_status);
 	void set_image_tracking_authorization_error(const String &p_message);
+	void set_image_tracking_session_active(bool p_active);
 	int get_marker_reference_image_count() const { return reference_images.size(); }
 	// True once after the provider set changed and the ARKit session must be re-run.
 	bool consume_providers_changed();
@@ -110,6 +112,8 @@ private:
 	ar_plane_detection_provider_t plane_detection_provider = nullptr;
 	ar_scene_reconstruction_provider_t scene_reconstruction_provider = nullptr;
 	ar_image_tracking_provider_t image_tracking_provider = nullptr;
+	// State changes and anchor batches must not overtake one another.
+	dispatch_queue_t image_callback_queue = dispatch_queue_create("org.godotengine.visionos.image-tracking", DISPATCH_QUEUE_SERIAL);
 
 	// UUID helper
 	static String uuid_to_string(const uuid_t p_uuid);

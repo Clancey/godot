@@ -1961,11 +1961,13 @@ Error EditorExportPlatformAppleEmbedded::_export_project_helper(const Ref<Editor
 
 	// Generate a unique name for the launch screen to avoid caching.
 	{
-		const String custom_launch_image_2x = p_preset->get("storyboard/custom_image@2x");
-		const String custom_launch_image_3x = p_preset->get("storyboard/custom_image@3x");
+		// Platforms without storyboards do not define these options.
+		const Variant custom_launch_image_2x = p_preset->get("storyboard/custom_image@2x");
+		const Variant custom_launch_image_3x = p_preset->get("storyboard/custom_image@3x");
 
 		String launch_image_hash;
-		if (custom_launch_image_2x.length() > 0 && custom_launch_image_3x.length() > 0) {
+		if (custom_launch_image_2x.get_type() == Variant::STRING && custom_launch_image_3x.get_type() == Variant::STRING &&
+				!String(custom_launch_image_2x).is_empty() && !String(custom_launch_image_3x).is_empty()) {
 			Vector<String> launch_scr_files;
 			launch_scr_files.push_back(custom_launch_image_2x);
 			launch_scr_files.push_back(custom_launch_image_3x);
